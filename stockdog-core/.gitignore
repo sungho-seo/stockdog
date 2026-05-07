@@ -1,0 +1,12 @@
+# Environments
+.env
+venv/
+__pycache__/
+*.pyc
+
+# twscrape sqlite DB (contains sensitive login tokens)
+accounts.db
+accounts.txt
+
+# OS generated files
+.DS_Store
