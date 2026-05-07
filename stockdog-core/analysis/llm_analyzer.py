@@ -14,7 +14,7 @@ def get_llm():
     """
     if os.getenv("GEMINI_API_KEY"):
         # We use a relatively low temperature for analytical consistency
-        return ChatGoogleGenerativeAI(model="gemini-1.5-pro-latest", temperature=0.2, google_api_key=os.getenv("GEMINI_API_KEY"))
+        return ChatGoogleGenerativeAI(model="gemini-3-pro-preview", temperature=0.2, google_api_key=os.getenv("GEMINI_API_KEY"))
     elif os.getenv("ANTHROPIC_API_KEY"):
         return ChatAnthropic(model="claude-3-opus-20240229", temperature=0.2)
     else:
