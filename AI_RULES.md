@@ -17,6 +17,7 @@ Build **stockdog**, a backend service that monitors the stock market by collecti
 1. **X (Twitter) Influencers**:
    - Read dynamically from configuration (`config.yaml`).
    - Starts with: Gary Black, wallstengine, gefetrades, kobeissiletter, jc_paretsx, stocksavvyshay, trendspider, deitaone, ryandetrick, barchart, bluekurtic, Cathie Wood, cryptorover.
+   - **Important Architectural Decision**: We use **GetXAPI** (via standard HTTP requests) for Twitter data collection. DO NOT revert to using headless scrapers (like `twscrape` or `selenium`) as they are unstable and frequently blocked by Cloudflare in server environments.
 2. **Market Indicators**:
    - Fear & Greed Index
    - VIX (Volatility Index)

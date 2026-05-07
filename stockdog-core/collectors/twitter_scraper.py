@@ -1,65 +1,69 @@
-import asyncio
+import os
+import requests
 import logging
+from dotenv import load_dotenv
 
+load_dotenv()
 logger = logging.getLogger(__name__)
 
-# Note: twscrape requires accounts to be added to its local sqlite database.
-# In Oracle Cloud, you will need to run `twscrape add_accounts accounts.txt`
-# before this module will work successfully.
-try:
-    from twscrape import API, gather
-    from twscrape.logger import set_log_level
-except ImportError:
-    logger.warning("twscrape is not installed or failed to load. Twitter scraping will not work.")
+GETXAPI_KEY = os.getenv("GETXAPI_KEY")
 
-async def fetch_recent_tweets(influencer_handles, limit_per_user=5):
+def get_influencer_tweets(influencer_handles, limit_per_user=5):
     """
-    Fetches the most recent tweets from a list of influencers.
+    Fetches the most recent tweets from a list of influencers using GetXAPI.
     """
+    if not GETXAPI_KEY:
+        logger.warning("GETXAPI_KEY is not set in .env. Twitter scraping will not work.")
+        return {handle: [] for handle in influencer_handles}
+
     results = {}
+    headers = {"Authorization": f"Bearer {GETXAPI_KEY}"}
     
-    try:
-        api = API()
-        # Suppress overly verbose twscrape logs
-        set_log_level("WARNING")
+    for handle in influencer_handles:
+        print(f"Fetching tweets for @{handle}...")
+        user_tweets = []
         
-        for handle in influencer_handles:
-            print(f"Fetching tweets for @{handle}...")
-            user_tweets = []
+        try:
+            params = {
+                "q": f"from:{handle}",
+                "product": "Latest"
+            }
             
-            try:
-                # We use search instead of user_tweets directly because it's sometimes more reliable
-                query = f"from:{handle}"
-                tweets = await gather(api.search(query, limit=limit_per_user))
+            response = requests.get(
+                "https://api.getxapi.com/twitter/tweet/advanced_search",
+                headers=headers,
+                params=params,
+                timeout=15
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                tweets = data.get("tweets", [])
+                
+                # Limit the number of tweets
+                tweets = tweets[:limit_per_user]
                 
                 for t in tweets:
                     user_tweets.append({
-                        "id": t.id,
-                        "date": str(t.date),
-                        "content": t.rawContent,
-                        "likes": t.likeCount,
-                        "retweets": t.retweetCount
+                        "id": t.get("id_str", t.get("id", "")),
+                        "date": t.get("createdAt", ""),
+                        "content": t.get("text", ""),
+                        "likes": t.get("favorite_count", t.get("likeCount", t.get("likes", 0))),
+                        "retweets": t.get("retweet_count", t.get("retweetCount", t.get("retweets", 0)))
                     })
+            else:
+                logger.error(f"GetXAPI error for {handle}: {response.status_code} - {response.text}")
                 
-                results[handle] = user_tweets
-            except Exception as user_e:
-                logger.error(f"Failed to fetch tweets for {handle}: {user_e}")
-                results[handle] = []
-                
-    except Exception as e:
-        logger.error(f"Twitter API initialization failed: {e}")
-        
+            results[handle] = user_tweets
+            
+        except Exception as e:
+            logger.error(f"Failed to fetch tweets for {handle}: {e}")
+            results[handle] = []
+            
     return results
-
-def get_influencer_tweets(influencers):
-    """
-    Synchronous wrapper for the asyncio twscrape logic.
-    """
-    return asyncio.run(fetch_recent_tweets(influencers))
 
 if __name__ == "__main__":
     import json
-    # Test execution (will fail if no accounts are added to twscrape db)
+    # Test execution
     test_handles = ["garyblack00", "kobeissiletter"]
-    print("Warning: This test requires twscrape accounts to be configured.")
     print(json.dumps(get_influencer_tweets(test_handles), indent=2))

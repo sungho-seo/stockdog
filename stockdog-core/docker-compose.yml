@@ -12,9 +12,7 @@ services:
       # Map the config file so you can update influencers without rebuilding the container
       - ./config.yaml:/app/config.yaml
       
-      # Map the twscrape SQLite database so account logins persist
-      - ./accounts.db:/app/accounts.db
-      
+
       # VERY IMPORTANT: Volume mapping for the Obsidian Markdown files.
       # Left side (Host): The path to your private 'skyler' github repo clone on the Ubuntu server.
       # Right side (Container): The path where the python script saves the file (matching config.yaml).

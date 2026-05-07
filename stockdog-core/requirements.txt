@@ -15,5 +15,6 @@ langchain==0.3.1
 langchain-google-genai==2.0.7
 langchain-anthropic==0.3.1
 
-# X Unofficial Scraping (Subject to change based on what works best currently)
-twscrape==0.12.0
+# X/Twitter Data Collection
+# We use 'requests' (defined above) to call GetXAPI
+
