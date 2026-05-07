@@ -1,0 +1,19 @@
+# StockDog Core Requirements
+
+# Environment & Config
+python-dotenv==1.0.1
+pyyaml==6.0.1
+
+# HTTP & Scraping
+requests==2.32.3
+beautifulsoup4==4.12.3
+
+# LLM Integration
+google-generativeai==0.8.3  # Gemini API
+anthropic==0.42.0           # Claude API
+langchain==0.3.1
+langchain-google-genai==2.0.7
+langchain-anthropic==0.3.1
+
+# X Unofficial Scraping (Subject to change based on what works best currently)
+twscrape==0.12.0

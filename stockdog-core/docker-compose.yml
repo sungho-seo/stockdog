@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  stockdog:
+    build: .
+    container_name: stockdog_core
+    # Do not restart automatically, because we will run this as a daily cron job
+    restart: "no" 
+    env_file:
+      - .env
+    volumes:
+      # Map the config file so you can update influencers without rebuilding the container
+      - ./config.yaml:/app/config.yaml
+      
+      # VERY IMPORTANT: Volume mapping for the Obsidian Markdown files.
+      # Left side (Host): The path to your private 'skyler' github repo clone on the Ubuntu server.
+      # Right side (Container): The path where the python script saves the file (matching config.yaml).
+      - ../skyler/daily-market:/notes/daily-market

@@ -1,0 +1,28 @@
+# StockDog Configuration
+
+# List of X (Twitter) influencers to monitor for market sentiment
+twitter_influencers:
+  - "garyblack00"
+  - "wallstengine"
+  - "gefetrades"
+  - "kobeissiletter"
+  - "jc_paretsx"
+  - "stocksavvyshay"
+  - "trendspider"
+  - "deitaone"
+  - "ryandetrick"
+  - "barchart"
+  - "bluekurtic"
+  - "Cathie Wood"
+  - "cryptorover"
+
+# Target tickers to track for 13F Institutional Holdings
+portfolio_13f:
+  - "TSLA"
+  - "ANET"
+
+# Settings for LLM formatting
+obsidian:
+  # In Docker, this maps to the volume defined in docker-compose.yml
+  vault_output_dir: "/notes/daily-market"
+  date_format: "%Y-%m-%d"
