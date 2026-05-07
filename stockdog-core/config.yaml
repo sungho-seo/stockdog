@@ -25,4 +25,5 @@ portfolio_13f:
 obsidian:
   # In Docker, this maps to the volume defined in docker-compose.yml
   vault_output_dir: "/notes/daily-market"
+  raw_output_dir: "/notes/daily-market/raw"
   date_format: "%Y-%m-%d"

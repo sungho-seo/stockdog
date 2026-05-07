@@ -10,7 +10,7 @@ from collectors.twitter_scraper import get_influencer_tweets
 
 # Import Phase 3 Analyzers and Generators
 from analysis.llm_analyzer import analyze_market_data
-from utils.markdown_generator import save_to_obsidian
+from utils.markdown_generator import save_to_obsidian, save_raw_twitter_data
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
@@ -35,6 +35,9 @@ def main():
     indicators_data = get_all_indicators()
     f13_data = get_all_13f_data(portfolio)
     twitter_data = get_influencer_tweets(influencers)
+    
+    # Save raw twitter data immediately
+    save_raw_twitter_data(twitter_data, config)
     
     # --- Phase 3: LLM Analysis & Output ---
     print("\n--- Phase 3: LLM Analysis & Output ---")
