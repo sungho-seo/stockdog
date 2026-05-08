@@ -12,6 +12,7 @@ from collectors.twitter_scraper import get_influencer_tweets
 from analysis.llm_analyzer import analyze_market_data
 from utils.markdown_generator import save_to_obsidian, save_raw_twitter_data
 from utils.chart_generator import generate_fear_greed_gauge
+from utils.notifier import send_telegram_message, send_telegram_photo
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
@@ -41,10 +42,11 @@ def main():
     save_raw_twitter_data(twitter_data, config)
 
     # Generate Fear & Greed gauge image
+    gauge_path = None
     fgi = indicators_data.get("fear_and_greed", {})
     if fgi.get("score") is not None:
         raw_dir = config.get("obsidian", {}).get("raw_output_dir", "/notes/daily-market/raw")
-        generate_fear_greed_gauge(
+        gauge_path = generate_fear_greed_gauge(
             score=fgi["score"],
             rating=fgi.get("rating", "unknown"),
             output_dir=raw_dir
@@ -57,8 +59,18 @@ def main():
     
     if markdown_content.startswith("Error") or markdown_content.startswith("> [!error]"):
         print("Analysis failed. See logs.")
+        send_telegram_message("❌ StockDog Analysis Failed. Check server logs.")
     else:
         save_to_obsidian(markdown_content, config)
+        
+        # --- Phase 4: Notification ---
+        print("\n--- Phase 4: Notification ---")
+        summary_msg = f"✅ *StockDog Report Ready*\n\nFear & Greed: {int(round(fgi.get('score', 0)))} ({fgi.get('rating', 'N/A').upper()})\n\nDaily report has been synced to Obsidian."
+        
+        if gauge_path:
+            send_telegram_photo(gauge_path, caption=summary_msg)
+        else:
+            send_telegram_message(summary_msg)
     
     print("🐾 StockDog run complete.")
 

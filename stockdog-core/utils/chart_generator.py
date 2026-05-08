@@ -5,6 +5,7 @@ matplotlib.use('Agg')  # Headless mode (no display needed in Docker)
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from datetime import datetime
+import pytz
 import logging
 
 logger = logging.getLogger(__name__)
@@ -30,31 +31,30 @@ RATING_COLORS = {
 def generate_fear_greed_gauge(score: float, rating: str, output_dir: str, date_str: str = None) -> str:
     """
     Generates a dark-themed speedometer gauge chart for the Fear & Greed Index.
-
-    Args:
-        score:      Current index score (0-100)
-        rating:     Qualitative label (e.g. 'greed', 'fear')
-        output_dir: Directory to save the PNG image
-        date_str:   Date string for the filename (defaults to today)
-
-    Returns:
-        Absolute path to the saved PNG file, or None on error.
     """
     try:
+        # Timezones
+        kst = pytz.timezone('Asia/Seoul')
+        est = pytz.timezone('US/Eastern')
+        
+        now_kst = datetime.now(kst)
+        now_est = datetime.now(est)
+        
         if date_str is None:
-            date_str = datetime.now().strftime("%Y-%m-%d")
+            date_str = now_kst.strftime("%Y-%m-%d")
+        
+        time_info = f"KST: {now_kst.strftime('%H:%M')} | EST: {now_est.strftime('%H:%M')}"
 
         BG = '#16213E'
-        fig, ax = plt.subplots(figsize=(8, 5.2), facecolor=BG)
+        fig, ax = plt.subplots(figsize=(8, 5.5), facecolor=BG)
         ax.set_facecolor(BG)
         ax.set_xlim(-1.25, 1.25)
-        ax.set_ylim(-0.45, 1.25)
+        ax.set_ylim(-0.45, 1.3)
         ax.set_aspect('equal')
         ax.axis('off')
 
         # ── Gauge zones ──────────────────────────────────────────────
         for s_start, s_end, color, label in GAUGE_ZONES:
-            # Map score range → angle range (180° = left/0, 0° = right/100)
             a_start = 180 - (s_start / 100) * 180
             a_end   = 180 - (s_end   / 100) * 180
             wedge = mpatches.Wedge(
@@ -66,13 +66,13 @@ def generate_fear_greed_gauge(score: float, rating: str, output_dir: str, date_s
             )
             ax.add_patch(wedge)
 
-            # Zone label
+            # Zone label (Increased font size)
             mid_a = np.radians(180 - ((s_start + s_end) / 2 / 100) * 180)
             r_lbl = 0.77
             ax.text(
                 r_lbl * np.cos(mid_a), r_lbl * np.sin(mid_a),
                 label, ha='center', va='center',
-                fontsize=7.5, color='white', fontweight='bold',
+                fontsize=10.5, color='white', fontweight='bold',
                 multialignment='center', zorder=3
             )
 
@@ -94,36 +94,64 @@ def generate_fear_greed_gauge(score: float, rating: str, output_dir: str, date_s
                 color='white', lw=1.2, zorder=5
             )
 
-        # ── Needle ────────────────────────────────────────────────────
+        # ── Needle (Enhanced Arrow Head) ──────────────────────────────
         needle_a  = np.radians(180 - (score / 100) * 180)
         needle_len = 0.72
-        ax.annotate(
-            '', xy=(needle_len * np.cos(needle_a), needle_len * np.sin(needle_a)),
-            xytext=(0, 0),
-            arrowprops=dict(arrowstyle='->', color='white', lw=3),
-            zorder=6
-        )
+        
+        # Draw the needle line
+        ax.plot([0, needle_len * np.cos(needle_a)], [0, needle_len * np.sin(needle_a)],
+                color='white', lw=3.5, zorder=6)
+        
+        # Add a larger triangle arrow head at the tip
+        head_len = 0.08
+        ax.arrow(0, 0, (needle_len+0.02) * np.cos(needle_a), (needle_len+0.02) * np.sin(needle_a),
+                 head_width=0.07, head_length=head_len, fc='white', ec='white', 
+                 length_includes_head=True, zorder=7)
+
         # Needle pivot
-        pivot = plt.Circle((0, 0), 0.05, color='white', zorder=7)
+        pivot = plt.Circle((0, 0), 0.06, color='white', zorder=8)
         ax.add_patch(pivot)
 
         # ── Score & rating text ───────────────────────────────────────
         ax.text(0, -0.15, str(int(round(score))),
                 ha='center', va='center',
-                fontsize=42, color='white', fontweight='bold', zorder=8)
+                fontsize=46, color='white', fontweight='bold', zorder=9)
 
         rating_color = RATING_COLORS.get(rating.lower().strip(), '#ECEFF1')
-        ax.text(0, -0.30, rating.upper(),
+        ax.text(0, -0.32, rating.upper(),
                 ha='center', va='center',
-                fontsize=13, color=rating_color, fontweight='bold', zorder=8)
+                fontsize=14, color=rating_color, fontweight='bold', zorder=9)
 
-        # ── Title & date ──────────────────────────────────────────────
-        ax.text(0, 1.15, 'Fear & Greed Index',
+        # ── Title & Date/Time ─────────────────────────────────────────
+        ax.text(0, 1.20, 'Fear & Greed Index',
                 ha='center', va='center',
-                fontsize=15, color='white', fontweight='bold')
-        ax.text(0, 1.04, date_str,
+                fontsize=16, color='white', fontweight='bold')
+        ax.text(0, 1.10, date_str,
                 ha='center', va='center',
-                fontsize=10, color='#90A4AE')
+                fontsize=11, color='#90A4AE', fontweight='bold')
+        ax.text(0, 1.02, time_info,
+                ha='center', va='center',
+                fontsize=9, color='#CFD8DC')
+
+        # ── Edge labels 0 / 100 ───────────────────────────────────────
+        ax.text(-1.12, -0.08, '0',   ha='center', fontsize=9, color='#90A4AE')
+        ax.text( 1.12, -0.08, '100', ha='center', fontsize=9, color='#90A4AE')
+
+        # ── Save ──────────────────────────────────────────────────────
+        os.makedirs(output_dir, exist_ok=True)
+        filepath = os.path.join(output_dir, f"fear_greed_{date_str}.png")
+
+        plt.tight_layout(pad=0.3)
+        plt.savefig(filepath, dpi=150, bbox_inches='tight',
+                    facecolor=BG, edgecolor='none')
+        plt.close(fig)
+
+        logger.info(f"Fear & Greed gauge saved to {filepath}")
+        return filepath
+
+    except Exception as e:
+        logger.error(f"Failed to generate Fear & Greed gauge: {e}")
+        return None
 
         # ── Edge labels 0 / 100 ───────────────────────────────────────
         ax.text(-1.12, -0.08, '0',   ha='center', fontsize=9, color='#90A4AE')
