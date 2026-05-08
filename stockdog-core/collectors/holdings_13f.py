@@ -1,53 +1,48 @@
-import requests
-from bs4 import BeautifulSoup
+import yfinance as yf
 import logging
+import pandas as pd
 
 logger = logging.getLogger(__name__)
 
 def fetch_institutional_holdings(ticker):
     """
-    Fetches the institutional holdings summary for a given ticker.
-    As a free alternative to parsing raw SEC 13F XMLs, we scrape Yahoo Finance's Holders page
-    which aggregates 13F data.
+    Fetches the institutional holdings summary for a given ticker using yfinance.
+    This bypasses Yahoo's anti-bot measures to get reliable 13F-style data.
     """
-    url = f"https://finance.yahoo.com/quote/{ticker}/holders"
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-    }
-    
     try:
-        response = requests.get(url, headers=headers, timeout=10)
-        if response.status_code == 200:
-            soup = BeautifulSoup(response.text, 'html.parser')
+        holdings_data = {
+            "ticker": ticker,
+            "institutional_ownership_percent": None,
+            "top_institutions": []
+        }
+        
+        t = yf.Ticker(ticker)
+        df = t.institutional_holders
+        
+        if df is not None and not df.empty:
+            # Grab the top 5 institutions
+            top_5 = df.head(5)
             
-            # Note: Yahoo Finance DOM changes frequently. This is a basic attempt to find the major holders summary.
-            # In a production environment, you might want to use a reliable API like Financial Modeling Prep or SEC API.
-            holdings_data = {
-                "ticker": ticker,
-                "institutional_ownership_percent": None,
-                "top_institutions": []
-            }
-            
-            # Find the major holders table (approximate logic)
-            tables = soup.find_all("table")
-            if tables:
-                # Top institutions are usually in the second table
-                if len(tables) > 1:
-                    inst_table = tables[1]
-                    rows = inst_table.find_all("tr")
-                    for row in rows[1:6]: # Get top 5
-                        cols = row.find_all("td")
-                        if len(cols) >= 4:
-                            holder_name = cols[0].text.strip()
-                            shares = cols[1].text.strip()
-                            holdings_data["top_institutions"].append({
-                                "name": holder_name,
-                                "shares": shares
-                            })
-                            
-            return holdings_data
+            for index, row in top_5.iterrows():
+                holder_name = row.get("Holder", "Unknown")
+                shares = row.get("Shares", 0)
+                
+                # Format shares with commas
+                if pd.isna(shares):
+                    shares_str = "Unknown"
+                elif isinstance(shares, (int, float)):
+                    shares_str = f"{int(shares):,}"
+                else:
+                    shares_str = str(shares)
+                    
+                holdings_data["top_institutions"].append({
+                    "name": holder_name,
+                    "shares": shares_str
+                })
+                
+        return holdings_data
     except Exception as e:
-        logger.error(f"Failed to fetch 13F/Holders for {ticker}: {e}")
+        logger.error(f"Failed to fetch 13F/Holders for {ticker} via yfinance: {e}")
         
     return {"ticker": ticker, "error": "Could not fetch data"}
 
