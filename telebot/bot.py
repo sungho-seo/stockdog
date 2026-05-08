@@ -4,6 +4,7 @@ import re
 import json
 import logging
 import urllib.request
+import requests
 import tempfile
 from utils.chart_generator import generate_fear_greed_gauge
 import urllib.parse
@@ -589,11 +590,16 @@ async def cmd_fear(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("⏳ Fear & Greed 조회 중...")
     try:
         url = "https://production.dataviz.cnn.io/index/fearandgreed/graphdata"
-        req = urllib.request.Request(
-            url,
-            headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
-        )
-        data = json.loads(urllib.request.urlopen(req, timeout=10).read().decode())
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "Accept": "application/json",
+            "Referer": "https://www.cnn.com/markets/fear-and-greed"
+        }
+        
+        resp = requests.get(url, headers=headers, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        
         fgi  = data.get("fear_and_greed", {})
         score  = fgi.get("score", 0)
         rating = fgi.get("rating", "unknown")
