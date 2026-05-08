@@ -1,0 +1,23 @@
+version: '3.8'
+
+services:
+  telebot:
+    build: .
+    container_name: skyler_telebot
+    # 항상 재시작 (텔레그램 봇은 상시 실행)
+    restart: always
+    env_file:
+      - .env
+    # 헬스체크: polling 프로세스가 살아있는지 확인
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os; os.kill(1, 0)"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+
+# NOTE: 환경변수 (.env 파일 필요)
+# BOT_TOKEN       = 텔레그램 봇 토큰
+# CHAT_ID         = 허용된 채팅 ID
+# GITHUB_PAT      = GitHub Personal Access Token
+# GEMINI_API_KEY  = Gemini API 키
+# REPO_NAME       = sungho-seo/skyler (기본값)

@@ -1,0 +1,6 @@
+python-telegram-bot==20.7
+PyGithub==2.1.1
+pytz==2024.1
+youtube-transcript-api==0.6.3
+matplotlib==3.9.4
+requests==2.32.3
