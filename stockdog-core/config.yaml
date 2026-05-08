@@ -4,7 +4,6 @@
 twitter_influencers:
   - "garyblack00"
   - "wallstengine"
-  - "gefetrades"
   - "kobeissiletter"
   - "jc_paretsx"
   - "stocksavvyshay"
@@ -13,7 +12,7 @@ twitter_influencers:
   - "ryandetrick"
   - "barchart"
   - "bluekurtic"
-  - "Cathie Wood"
+  - "CathieWood"
   - "cryptorover"
 
 # Target tickers to track for 13F Institutional Holdings
