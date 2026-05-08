@@ -44,12 +44,15 @@ def get_influencer_tweets(influencer_handles, limit_per_user=5):
                 tweets = tweets[:limit_per_user]
                 
                 for t in tweets:
+                    media_list = t.get("media", t.get("extended_entities", {}).get("media", []))
+                    media_urls = [m.get("url") for m in media_list if m.get("type") in ["photo", "animated_gif"]]
                     user_tweets.append({
                         "id": t.get("id_str", t.get("id", "")),
                         "date": t.get("createdAt", ""),
                         "content": t.get("text", ""),
                         "likes": t.get("favorite_count", t.get("likeCount", t.get("likes", 0))),
-                        "retweets": t.get("retweet_count", t.get("retweetCount", t.get("retweets", 0)))
+                        "retweets": t.get("retweet_count", t.get("retweetCount", t.get("retweets", 0))),
+                        "media_urls": media_urls
                     })
             else:
                 logger.error(f"GetXAPI error for {handle}: {response.status_code} - {response.text}")

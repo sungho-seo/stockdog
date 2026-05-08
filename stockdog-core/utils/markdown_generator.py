@@ -1,6 +1,7 @@
 import os
 from datetime import datetime
 import logging
+import requests
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +45,8 @@ def save_raw_twitter_data(twitter_data, config):
         date_format = config.get("obsidian", {}).get("date_format", "%Y-%m-%d")
         
         os.makedirs(raw_dir, exist_ok=True)
+        media_dir = os.path.join(raw_dir, "media")
+        os.makedirs(media_dir, exist_ok=True)
         
         current_date_str = datetime.now().strftime(date_format)
         filename = f"Raw_Twitter_{current_date_str}.md"
@@ -61,7 +64,28 @@ def save_raw_twitter_data(twitter_data, config):
             for tweet in tweets:
                 content += f"- **Date**: {tweet.get('date', 'Unknown')}\n"
                 content += f"- **Stats**: {tweet.get('likes', 0)} Likes, {tweet.get('retweets', 0)} Retweets\n"
-                content += f"- **Content**:\n  > {tweet.get('content', '').replace(chr(10), chr(10) + '  > ')}\n\n"
+                content += f"- **Content**:\n  > {tweet.get('content', '').replace(chr(10), chr(10) + '  > ')}\n"
+                
+                media_urls = tweet.get('media_urls', [])
+                if media_urls:
+                    for i, url in enumerate(media_urls):
+                        try:
+                            ext = url.split('.')[-1].split('?')[0]
+                            if len(ext) > 4: ext = "jpg"
+                            media_filename = f"{tweet.get('id', 'unknown')}_{i}.{ext}"
+                            media_filepath = os.path.join(media_dir, media_filename)
+                            
+                            if not os.path.exists(media_filepath):
+                                r = requests.get(url, timeout=10)
+                                if r.status_code == 200:
+                                    with open(media_filepath, 'wb') as img_f:
+                                        img_f.write(r.content)
+                            
+                            content += f"  > \n  > ![[media/{media_filename}]]\n"
+                        except Exception as img_e:
+                            logger.error(f"Failed to download image {url}: {img_e}")
+                
+                content += "\n"
         
         with open(filepath, "w", encoding="utf-8") as f:
             f.write(content)
