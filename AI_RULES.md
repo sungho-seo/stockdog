@@ -18,13 +18,11 @@ Build **stockdog**, a backend service that monitors the stock market by collecti
    - Read dynamically from configuration (`config.yaml`).
    - Starts with: Gary Black, wallstengine, gefetrades, kobeissiletter, jc_paretsx, stocksavvyshay, trendspider, deitaone, ryandetrick, barchart, bluekurtic, Cathie Wood, cryptorover.
    - **Important Architectural Decision**: We use **GetXAPI** (via standard HTTP requests) for Twitter data collection. DO NOT revert to using headless scrapers (like `twscrape` or `selenium`) as they are unstable and frequently blocked by Cloudflare in server environments.
+   - **Media Extraction**: The scraper now extracts image/GIF URLs and downloads them locally to `skyler/daily-market/raw/media/` for inline display in Obsidian.
 2. **Market Indicators**:
-   - Fear & Greed Index
-   - VIX (Volatility Index)
-   - US 10-Year Treasury Yield
-   - Major Macro Events (CPI, PPI, FOMC)
+   - **Fear & Greed Index**: Fetched via CNN's internal API.
+   - **VIX/10Y Yield**: Fetched via Yahoo Finance Chart API.
 3. **Institutional Holdings**:
-   - 13F Filings tracked dynamically from configuration (`config.yaml`).
    - Starts with: TSLA, ANET.
 
 ## 🧠 AI Assistant Guidelines
