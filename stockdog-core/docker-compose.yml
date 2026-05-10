@@ -14,6 +14,6 @@ services:
       - ./cache:/app/cache
 
       # VERY IMPORTANT: Volume mapping for the Obsidian Markdown files.
-      # Left side (Host): The path to your private 'skyler' github repo clone on the Ubuntu server.
-      # Right side (Container): The path where the python script saves the file (matching config.yaml).
-      - ../skyler:/notes
+      # Left side (Host): ~/service/skyler (sibling repo, cloned separately from stockdog)
+      # Right side (Container): /notes (matches config.yaml base_dir prefix)
+      - ../../skyler:/notes

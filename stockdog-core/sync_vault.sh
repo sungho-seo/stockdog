@@ -4,7 +4,7 @@
 # GitHub target path: raw/stockdog/daily-market/YYYY-MM-DD/
 
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-VAULT_DIR="$DIR/../skyler"
+VAULT_DIR="$DIR/../../skyler"
 DATE=$(date +%Y-%m-%d)
 
 # Local source / GitHub target
