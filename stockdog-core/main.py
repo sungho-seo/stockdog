@@ -10,7 +10,7 @@ from collectors.twitter_scraper import get_influencer_tweets
 
 # Import Phase 3 Analyzers and Generators
 from analysis.llm_analyzer import analyze_market_data
-from utils.markdown_generator import save_to_obsidian, save_raw_twitter_data
+from utils.markdown_generator import save_to_obsidian, save_raw_twitter_data, _get_daily_dirs
 from utils.chart_generator import generate_fear_greed_gauge
 from utils.notifier import send_telegram_message, send_telegram_photo
 
@@ -41,15 +41,15 @@ def main():
     # Save raw twitter data immediately
     save_raw_twitter_data(twitter_data, config)
 
-    # Generate Fear & Greed gauge image
+    # Generate Fear & Greed gauge image (saved to daily media/ folder)
     gauge_path = None
     fgi = indicators_data.get("fear_and_greed", {})
     if fgi.get("score") is not None:
-        raw_dir = config.get("obsidian", {}).get("raw_output_dir", "/notes/daily-market/raw")
+        _, media_dir, _ = _get_daily_dirs(config)
         gauge_path = generate_fear_greed_gauge(
             score=fgi["score"],
             rating=fgi.get("rating", "unknown"),
-            output_dir=raw_dir
+            output_dir=media_dir
         )
 
     
