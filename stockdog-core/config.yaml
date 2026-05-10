@@ -5,9 +5,9 @@ vault:
   influencers_file: "/notes/_system/influencers.md"
   watchlist_file: "/notes/_system/watchlist.md"
 
-# Settings for output formatting
+# Output settings
 obsidian:
-  # In Docker, this maps to the volume defined in docker-compose.yml
-  # Structure: base_dir/YYYY-MM-DD/{Market_Report, Raw_Twitter, media/}
+  # Docker volume: ../skyler → /notes
+  # Structure: base_dir/YYYY-MM-DD/{Market_Report_US, Market_Report_KR, Raw_Twitter, media/}
   base_dir: "/notes/daily-market"
   date_format: "%Y-%m-%d"

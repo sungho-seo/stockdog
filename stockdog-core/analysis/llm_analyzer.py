@@ -7,66 +7,127 @@ from langchain_anthropic import ChatAnthropic
 
 logger = logging.getLogger(__name__)
 
+
 def get_llm():
-    """
-    Initializes the LLM model based on available environment variables.
-    Prefers Gemini, falls back to Claude.
-    """
     if os.getenv("GEMINI_API_KEY"):
-        # We use a relatively low temperature for analytical consistency
         return ChatGoogleGenerativeAI(model="gemini-3-pro-preview", temperature=0.2, google_api_key=os.getenv("GEMINI_API_KEY"))
     elif os.getenv("ANTHROPIC_API_KEY"):
         return ChatAnthropic(model="claude-3-opus-20240229", temperature=0.2)
     else:
-        logger.error("No LLM API keys found. Please set GEMINI_API_KEY or ANTHROPIC_API_KEY in .env")
+        logger.error("No LLM API keys found.")
         return None
 
-def analyze_market_data(twitter_data, indicators_data, f13_data):
+
+def _invoke(llm, system_instruction, human_message, data_dict):
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", system_instruction),
+        ("human", human_message),
+    ])
+    chain = prompt | llm
+    print("🧠 Analyzing with LLM... (this may take a minute)")
+    try:
+        response = chain.invoke(data_dict)
+        return response.content
+    except Exception as e:
+        logger.error(f"LLM analysis failed: {e}")
+        return f"> [!error] Analysis Failed\n> {str(e)}"
+
+
+def analyze_us_market(data):
     """
-    Feeds the collected raw data to the LLM and asks it to generate a structured 
-    market analysis report.
+    Generates a US market report from Twitter, indicators, us_market prices, and 13F data.
     """
     llm = get_llm()
     if not llm:
         return "Error: LLM not configured."
-        
+
     system_instruction = """
-    You are an expert financial analyst and a highly capable data synthesizer. 
-    Your task is to analyze raw market data collected from Twitter influencers, market indicators (VIX, 10Y Yield, Fear & Greed), and 13F institutional holdings.
-    
-    CRITICAL REQUIREMENT: Output your analysis STRICTLY in Obsidian-flavored Markdown. 
-    Use the following formatting elements to make it beautiful and readable:
-    - Headers (##, ###)
-    - Bullet points and numbered lists
-    - Tables for comparing data (e.g., 13F holdings or indicator summaries)
-    - Obsidian Callouts for key takeaways, e.g.:
-      > [!summary] Executive Summary
-      > [!warning] Conflicting Opinions
-      > [!info] Market Indicators
-      
-    Your report should include:
-    1. A brief executive summary of the current market mood.
-    2. A summary of the Market Indicators (translate what they mean together).
-    3. An analysis of the X (Twitter) influencers' sentiment. Specifically, highlight consensus and any *conflicting opinions* between influencers.
-    4. An overview of the 13F institutional holding changes for the target portfolio.
-    5. A short-term market flow prediction based on the aggregated data.
+You are an expert US financial analyst. Analyze the provided market data and generate a structured daily report in Obsidian-flavored Markdown.
+
+Use these formatting elements:
+- Headers (##, ###)
+- Tables for price data and 13F holdings
+- Obsidian callouts: > [!summary], > [!warning], > [!info], > [!tip]
+
+Structure the report as follows:
+1. > [!summary] Executive Summary — overall market mood in 3-5 sentences
+2. ## Market Indicators — F&G, VIX, 10Y Yield with interpretation
+3. ## Portfolio Snapshot — table of all US stocks/ETFs/indices: name, price, change%, brief note
+4. ## Influencer Sentiment — consensus and conflicting opinions from Twitter
+5. ## Institutional Holdings (13F) — table of top holders for each stock
+6. ## Short-term Outlook — data-driven 2-3 day forecast
+"""
+
+    human_message = """Here is today's raw data:
+
+<Indicators>
+{indicators}
+</Indicators>
+
+<US_Market>
+{us_market}
+</US_Market>
+
+<13F>
+{f13}
+</13F>
+
+<Twitter>
+{twitter}
+</Twitter>
+
+Generate the Obsidian Markdown report."""
+
+    return _invoke(llm, system_instruction, human_message, {
+        "indicators": json.dumps(data.get('indicators', {}), indent=2),
+        "us_market": json.dumps(data.get('us_market', {}), indent=2),
+        "f13": json.dumps(data.get('13f', {}), indent=2),
+        "twitter": json.dumps(data.get('twitter', {}), indent=2),
+    })
+
+
+def analyze_kr_market(data):
     """
-    
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", system_instruction),
-        ("human", "Here is the raw data:\n\n<Indicators>\n{indicators}\n</Indicators>\n\n<13F>\n{f13}\n</13F>\n\n<Twitter>\n{twitter}\n</Twitter>\n\nPlease generate the Obsidian Markdown report.")
-    ])
-    
-    chain = prompt | llm
-    
-    print("🧠 Analyzing data with LLM... (This may take a minute)")
-    try:
-        response = chain.invoke({
-            "indicators": json.dumps(indicators_data, indent=2),
-            "f13": json.dumps(f13_data, indent=2),
-            "twitter": json.dumps(twitter_data, indent=2)
-        })
-        return response.content
-    except Exception as e:
-        logger.error(f"LLM Analysis failed: {e}")
-        return f"> [!error] Analysis Failed\n> {str(e)}"
+    Generates a Korean market report from KR stocks, indices, and exchange rate data.
+    """
+    llm = get_llm()
+    if not llm:
+        return "Error: LLM not configured."
+
+    system_instruction = """
+You are an expert Korean financial analyst. Analyze the provided Korean market data and generate a structured daily report in Obsidian-flavored Markdown.
+
+Use these formatting elements:
+- Headers (##, ###)
+- Tables for price data
+- Obsidian callouts: > [!summary], > [!warning], > [!info]
+
+Structure the report as follows:
+1. > [!summary] 시장 요약 — 오늘 한국 시장 전반적 흐름 (3-5문장)
+2. ## 주요 지수 — KOSPI, KOSDAQ 테이블 (종가, 등락률, 해석)
+3. ## 환율 — USD/KRW 현황 및 시사점
+4. ## 개별 종목 동향 — 종목별 테이블 (종목명, 종가, 등락률, 거래량, 분석)
+5. ## 단기 전망 — 데이터 기반 1-2일 전망
+"""
+
+    human_message = """Here is today's Korean market data:
+
+<KR_Indices>
+{kr_indices}
+</KR_Indices>
+
+<Exchange_Rates>
+{exchange}
+</Exchange_Rates>
+
+<KR_Stocks>
+{kr_stocks}
+</KR_Stocks>
+
+Generate the Obsidian Markdown report in Korean."""
+
+    return _invoke(llm, system_instruction, human_message, {
+        "kr_indices": json.dumps(data.get('kr_indices', {}), indent=2),
+        "exchange": json.dumps(data.get('exchange', {}), indent=2),
+        "kr_stocks": json.dumps(data.get('kr_stocks', {}), indent=2),
+    })
