@@ -53,6 +53,11 @@
 - `deploy.sh`, `sync_vault.sh` 모두 `git update-index --chmod=+x`로 실행 권한 커밋.
 - 서버 pull 후 별도 `chmod +x` 불필요.
 
+### 9. session_summaries/ 디렉터리 구조 도입
+- **배경**: 여러 서비스의 세션 요약이 생길 수 있어 서비스별로 분리 관리.
+- **해결**: `session_summaries/stockdog.md`로 이동. `sync_vault.sh`가 skyler 볼트에도 자동 복사.
+- Obsidian Claude Code가 볼트 내 `raw/stockdog/session_summaries/stockdog.md`를 참조해 노트 작성 가능.
+
 ---
 
 ## 📈 Next Steps (Planned Improvements)
@@ -92,12 +97,12 @@ This session focused on transforming StockDog into a robust, professional-grade 
 - **Solution**: Upgraded to **Gemini 3.0 Pro** (`gemini-3-pro-preview`).
 - **Fix**: Resolved authentication issues by explicitly passing the API key to the LLM constructor.
 
-### 5. TeleBot Integration & Migration
+### 4. TeleBot Integration & Migration
 - **Migration**: Moved the separate `Skyler-TeleBot` project into this repository for centralized management.
 - **Dockerization**: Created a dedicated `Dockerfile` and `docker-compose.yml` for the bot with `restart: always` policy.
 - **New Feature**: Added the `/fear` command. It fetches live data and generates a professional dark-theme gauge image using `matplotlib` to send via Telegram.
 
-### 6. Fear & Greed Gauge Generator
+### 5. Fear & Greed Gauge Generator
 - Implemented a custom gauge chart generator (`chart_generator.py`) to visualize market sentiment without relying on external image URLs.
 
 ## 🛠️ Technical Debt Cleared
