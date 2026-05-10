@@ -7,7 +7,7 @@ services:
     # Do not restart automatically, because we will run this as a daily cron job
     restart: "no" 
     env_file:
-      - .env
+      - ../.env
     volumes:
       # Map the config file so you can update influencers without rebuilding the container
       - ./config.yaml:/app/config.yaml

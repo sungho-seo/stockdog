@@ -135,12 +135,12 @@ Runs with `restart: always` via Docker. Uses Gemini API for analysis. Reads/writ
 
 **`stockdog-core/config.yaml`** — edit to add/remove influencers or portfolio tickers without code changes. The `obsidian.base_dir` path (`/notes/daily-market`) is the Docker volume mount target.
 
-**`stockdog-core/.env`** — required keys:
+**`.env` (repo root)** — shared by both services. Required keys:
 - `GEMINI_API_KEY` — primary LLM
 - `ANTHROPIC_API_KEY` — fallback LLM
 - `GETXAPI_KEY` — Twitter/X data (REST API; **do not revert to `twscrape`/Selenium** — blocked by Cloudflare on server)
-- `TELEGRAM_BOT_TOKEN`, `BOT_TOKEN`, `CHAT_ID` — Telegram
-- `GITHUB_PAT` — vault access from the bot
+- `BOT_TOKEN`, `CHAT_ID` — Telegram
+- `GITHUB_PAT` — skyler vault push (sync_vault.sh) + telebot vault access
 
 **Docker volume** (core): `../skyler/daily-market` → `/notes/daily-market`. The `config.yaml` is also bind-mounted so it can be updated without rebuilding the image.
 

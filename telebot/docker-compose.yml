@@ -7,7 +7,7 @@ services:
     # 항상 재시작 (텔레그램 봇은 상시 실행)
     restart: always
     env_file:
-      - .env
+      - ../.env
     # 헬스체크: polling 프로세스가 살아있는지 확인
     healthcheck:
       test: ["CMD", "python", "-c", "import os; os.kill(1, 0)"]

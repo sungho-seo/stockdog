@@ -6,8 +6,8 @@ DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 VAULT_DIR="$DIR/../skyler"
 DATE=$(date +%Y-%m-%d)
 
-# Load API keys and tokens from .env
-set -a; source "$DIR/.env"; set +a
+# Load API keys and tokens from shared repo-root .env
+set -a; source "$DIR/../.env"; set +a
 
 send_telegram() {
     curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \

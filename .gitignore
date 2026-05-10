@@ -1,6 +1,9 @@
 # Obsidian Vault (Results Folder)
 skyler/
 
+# Shared environment variables
+.env
+
 # 13F cache
 stockdog-core/cache/
 
