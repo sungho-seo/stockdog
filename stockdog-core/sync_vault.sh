@@ -1,15 +1,10 @@
 #!/bin/bash
 # Pushes daily Markdown reports to the skyler vault on GitHub.
-# Local structure (daily-market/) is preserved as-is on the server.
-# GitHub target path: raw/stockdog/daily-market/YYYY-MM-DD/
+# Pipeline writes directly to raw/stockdog/daily-market/YYYY-MM-DD/ via Docker volume.
 
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 VAULT_DIR="$DIR/../../skyler"
 DATE=$(date +%Y-%m-%d)
-
-# Local source / GitHub target
-SRC="$VAULT_DIR/daily-market/$DATE"
-DEST="$VAULT_DIR/raw/stockdog/daily-market/$DATE"
 
 # Load shared .env
 set -a; source "$DIR/../.env"; set +a
@@ -26,15 +21,12 @@ cd "$VAULT_DIR" || {
     exit 1
 }
 
-# Copy today's .md files to the GitHub target path (exclude media/)
-if [ ! -d "$SRC" ]; then
-    echo "Source directory not found: $SRC"
+# Verify today's report exists
+if [ ! -d "raw/stockdog/daily-market/$DATE" ]; then
+    echo "Report not found: raw/stockdog/daily-market/$DATE"
     send_telegram "⚠️ Vault sync failed: no report found for $DATE"
     exit 1
 fi
-
-mkdir -p "$DEST"
-cp "$SRC"/*.md "$DEST/" 2>/dev/null
 
 # Copy session summary
 mkdir -p "raw/stockdog/session_summaries"

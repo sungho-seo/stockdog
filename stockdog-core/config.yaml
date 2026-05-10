@@ -9,5 +9,5 @@ vault:
 obsidian:
   # Docker volume: ../skyler → /notes
   # Structure: base_dir/YYYY-MM-DD/{Market_Report_US, Market_Report_KR, Raw_Twitter, media/}
-  base_dir: "/notes/daily-market"
+  base_dir: "/notes/raw/stockdog/daily-market"
   date_format: "%Y-%m-%d"
