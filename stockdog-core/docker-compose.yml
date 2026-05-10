@@ -16,4 +16,4 @@ services:
       # VERY IMPORTANT: Volume mapping for the Obsidian Markdown files.
       # Left side (Host): The path to your private 'skyler' github repo clone on the Ubuntu server.
       # Right side (Container): The path where the python script saves the file (matching config.yaml).
-      - ../skyler/daily-market:/notes/daily-market
+      - ../skyler:/notes

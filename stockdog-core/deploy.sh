@@ -8,7 +8,7 @@ cd $DIR
 
 # ── Cron Job 1: Main Pipeline ──────────────────────────────────────
 # Run daily at 02:00 UTC (= 11:00 KST) — after US after-hours market close
-CRON_MAIN="0 2 * * * cd $DIR && /usr/bin/docker compose run --rm stockdog python main.py >> $DIR/cron_stockdog.log 2>&1 && bash $DIR/sync_vault.sh >> $DIR/cron_stockdog.log 2>&1"
+CRON_MAIN="0 2 * * * cd $DIR && git -C $DIR/../skyler pull >> $DIR/cron_stockdog.log 2>&1; /usr/bin/docker compose run --rm stockdog python main.py >> $DIR/cron_stockdog.log 2>&1 && bash $DIR/sync_vault.sh >> $DIR/cron_stockdog.log 2>&1"
 
 # ── Cron Job 2: Fear & Greed at US Market Open ────────────────────
 # Run Mon-Fri at 13:30 UTC (= 09:30 ET = 22:30 KST)

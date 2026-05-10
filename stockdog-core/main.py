@@ -13,6 +13,7 @@ from collectors.twitter_scraper import get_influencer_tweets
 from analysis.llm_analyzer import analyze_market_data
 from utils.markdown_generator import save_to_obsidian, save_raw_twitter_data
 from utils.notifier import send_telegram_message
+from utils.vault_reader import read_influencers, read_watchlist_tickers
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
@@ -32,15 +33,22 @@ def main():
 
     # Load configuration
     config = load_config()
-    influencers = config.get('twitter_influencers', [])
-    portfolio = config.get('portfolio_13f', [])
+    vault = config.get('vault', {})
+
+    influencers = read_influencers(vault.get('influencers_file', ''))
+    portfolio = read_watchlist_tickers(vault.get('watchlist_file', ''), types=("STOCK",))
+
+    if not influencers or not portfolio:
+        print("❌ Failed to load influencers or portfolio from vault. Check vault files.")
+        send_telegram_message("❌ StockDog 시작 실패: vault 파일을 읽을 수 없습니다.")
+        return
 
     if args.sample:
         influencers = influencers[:1]
         portfolio = portfolio[:1]
         print(f"[SAMPLE MODE] 1 influencer ({influencers[0]}), 1 ticker ({portfolio[0]})")
     else:
-        print(f"Loaded config: Monitoring {len(influencers)} influencers and {len(portfolio)} tickers.")
+        print(f"Loaded from vault: {len(influencers)} influencers, {len(portfolio)} tickers.")
     
     # --- Phase 2: Data Collection ---
     print("\n--- Phase 2: Data Collection ---")

@@ -1,24 +1,9 @@
 # StockDog Configuration
 
-# List of X (Twitter) influencers to monitor for market sentiment
-twitter_influencers:
-  - "garyblack00"
-  - "wallstengine"
-  - "kobeissiletter"
-  - "jc_paretsx"
-  - "stocksavvyshay"
-  - "trendspider"
-  - "deitaone"
-  - "ryandetrick"
-  - "barchart"
-  - "bluekurtic"
-  - "CathieWood"
-  - "cryptorover"
-
-# Target tickers to track for 13F Institutional Holdings
-portfolio_13f:
-  - "TSLA"
-  - "ANET"
+# Obsidian vault file paths (resolved via Docker volume: ../skyler → /notes)
+vault:
+  influencers_file: "/notes/_system/influencers.md"
+  watchlist_file: "/notes/_system/watchlist.md"
 
 # Settings for output formatting
 obsidian:
