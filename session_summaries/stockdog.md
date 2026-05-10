@@ -53,6 +53,18 @@
 - `deploy.sh`, `sync_vault.sh` 모두 `git update-index --chmod=+x`로 실행 권한 커밋.
 - 서버 pull 후 별도 `chmod +x` 불필요.
 
+### 10. Obsidian 볼트를 설정 소스로 전환 (vault-driven config)
+- **배경**: 인플루언서/포트폴리오 변경 시 매번 `config.yaml`을 코드로 수정하거나 직접 알려줘야 하는 비효율.
+- **해결**: Obsidian의 `_system/influencers.md`, `_system/watchlist.md`를 단일 소스로 사용.
+  - `utils/vault_reader.py` 신규 작성.
+    - `influencers.md`: 테이블에서 `활성 = ✅`인 핸들만 파싱.
+    - `watchlist.md`: `TICKER|Name|TYPE` 형식에서 `TYPE=STOCK`인 미국 종목만 파싱.
+  - `config.yaml`: 하드코딩 리스트 제거, vault 파일 경로만 참조.
+  - `docker-compose.yml`: `../skyler/daily-market:/notes/daily-market` → `../skyler:/notes` (볼트 전체 마운트).
+  - `main.py`: `vault_reader`로 인플루언서·포트폴리오 로드.
+  - `deploy.sh`: cron 시작 시 `git -C ../skyler pull` 선행 → Obsidian 수정이 다음 날 자동 반영.
+- **최종 워크플로우**: Obsidian에서 파일 수정 → 자동 GitHub push → 서버 cron이 pull 후 반영. 코드 수정 불필요.
+
 ### 9. session_summaries/ 디렉터리 구조 도입
 - **배경**: 여러 서비스의 세션 요약이 생길 수 있어 서비스별로 분리 관리.
 - **해결**: `session_summaries/stockdog.md`로 이동. `sync_vault.sh`가 skyler 볼트에도 자동 복사.
