@@ -53,6 +53,43 @@
 - `deploy.sh`, `sync_vault.sh` 모두 `git update-index --chmod=+x`로 실행 권한 커밋.
 - 서버 pull 후 별도 `chmod +x` 불필요.
 
+### 11. OOP 파이프라인 리팩토링 (US / KR 분리)
+- **배경**: 미국/한국 시장 로직이 단일 `main.py`에 혼재 — 확장 어렵고 책임 분리 불명확.
+- **해결**: 추상 기반 클래스 `MarketPipeline` (pipelines/base.py) 도입.
+  - `collect()` / `analyze()` / `save()` / `notify()` / `run()` 인터페이스 정의.
+  - `USPipeline` (pipelines/us_pipeline.py): Twitter + 지표(F&G/VIX/10Y) + US 시장(yfinance) + 13F.
+  - `KRPipeline` (pipelines/kr_pipeline.py): 금융위 API 한국 주식/지수 + USD/KRW.
+- **새 컬렉터**:
+  - `collectors/us_market.py`: yfinance로 미국 주식·ETF·지수 가격 수집.
+  - `collectors/kr_stocks.py`: 금융위 `GetStockSecuritiesInfoService` API (srtnCd 기반).
+  - `collectors/kr_indices.py`: 금융위 `GetMarketIndexInfoService` API (KOSPI/KOSDAQ).
+  - `collectors/exchange_rates.py`: yfinance `KRW=X`로 USD/KRW 환율 수집.
+- **LLM 분석 분리**: `analyze_market_data()` → `analyze_us_market()` + `analyze_kr_market()`.
+  - US: 영문 프롬프트 (Executive Summary / Indicators / Portfolio / Sentiment / 13F / Outlook).
+  - KR: 한국어 프롬프트 (시장요약 / 주요지수 / 환율 / 개별종목 / 단기전망).
+- **리포트 분리**: `Market_Report_US_YYYY-MM-DD.md` / `Market_Report_KR_YYYY-MM-DD.md` 별도 생성.
+- **watchlist 타입 활용**: STOCK/ETF → US 시장, STOCK_KR/ETF_KR/INDEX_KR → KR 파이프라인.
+- **13F**: US STOCK 타입만 조회. KR 파이프라인은 분기별 재무제표 대상이나 현재는 미구현.
+
+### 12. Fear & Greed 별도 Cron 분리
+- **배경**: F&G 지수는 미국 장 개장 시 의미 있음. 메인 파이프라인(02:00 UTC)과 분리 필요.
+- **해결**: `fear_greed_job.py` 독립 실행, cron `30 13 * * 1-5` (UTC 13:30 = ET 09:30 = KST 22:30).
+- `deploy.sh`: F&G cron을 별도 항목으로 추가, `cron_fear_greed.log` 별도 관리.
+
+### 13. skyler 레포 독립 위치로 변경 (sibling repo)
+- **배경**: `~/service/stockdog/skyler/`는 임시 폴더였고, git clone 된 실제 skyler 레포가 아니었음.
+- **문제**: Docker 볼트 마운트가 `../skyler`→ stockdog 내부를 가리켜 `_system/` 파일 접근 불가.
+- **해결**: skyler를 stockdog의 형제 레포로 독립 배치: `~/service/skyler/`.
+  - `docker-compose.yml`: `../skyler:/notes` → `../../skyler:/notes`.
+  - `sync_vault.sh`: `VAULT_DIR="$DIR/../skyler"` → `VAULT_DIR="$DIR/../../skyler"`.
+  - `deploy.sh`: `git -C $DIR/../skyler pull` → `git -C $DIR/../../skyler pull`.
+- **서버 클론 명령**:
+  ```bash
+  cd ~/service
+  source stockdog/.env
+  git clone https://${GITHUB_PAT}@github.com/sungho-seo/skyler.git skyler
+  ```
+
 ### 10. Obsidian 볼트를 설정 소스로 전환 (vault-driven config)
 - **배경**: 인플루언서/포트폴리오 변경 시 매번 `config.yaml`을 코드로 수정하거나 직접 알려줘야 하는 비효율.
 - **해결**: Obsidian의 `_system/influencers.md`, `_system/watchlist.md`를 단일 소스로 사용.
@@ -73,18 +110,33 @@
 ---
 
 ## 📈 Next Steps (Planned Improvements)
+- **Phase 2**: 경제지표 캘린더 (CPI, PPI, FOMC, 10Y 금리) 수집 및 분석.
+- **Phase 3**: matplotlib 차트 + SQLite/CSV 히스토리 기반 트렌드 시각화.
 - **Prompt Engineering**: Gemini 프롬프트에 `📊 Earnings & Upgrades` 섹션 추가.
 - **Engagement Filtering**: 좋아요/리트윗 수 기준으로 트윗 우선순위 필터링.
-- **Attribution Accuracy**: LLM 기술적 분석 귀속 정확도 개선.
 
 ---
 *All changes have been committed and pushed to the main branch.*  
-**서버 반영:**
+**서버 반영 (전체 순서):**
 ```bash
+# 1. stockdog 최신 pull
 cd ~/service/stockdog && git pull
-# .env 통합: 두 .env 내용을 루트로 병합 후 기존 파일 삭제
-# telebot 재시작: cd telebot && docker compose up -d --build
-# cron 업데이트: cd stockdog-core && ./deploy.sh
+
+# 2. skyler 클론 (형제 위치)
+cd ~/service
+source stockdog/.env
+git clone https://${GITHUB_PAT}@github.com/sungho-seo/skyler.git skyler
+
+# 3. .env에 DATA_GO_KR_API_KEY 추가 (~/service/.env)
+
+# 4. Docker 이미지 재빌드
+cd ~/service/stockdog/stockdog-core && docker compose build
+
+# 5. 샘플 실행으로 전체 파이프라인 검증
+docker compose run --rm stockdog python main.py --sample
+
+# 6. cron 업데이트
+./deploy.sh
 ```
 
 ---
