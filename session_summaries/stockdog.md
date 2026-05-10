@@ -109,6 +109,16 @@
 
 ---
 
+### 14. 서버 배포 완료 (2026-05-10)
+- **skyler 클론**: `~/service/skyler/`에 PAT 인증으로 클론.
+  - GitHub는 비밀번호 인증 미지원 → URL에 PAT 직접 삽입 필요: `https://${GITHUB_PAT}@github.com/...`
+- **docker-compose.yml 경로 문제**: 서버가 git pull 전이라 구 경로(`../skyler`)를 참조 중이었음. `git pull` 후 해결.
+- **샘플 실행 결과 확인**:
+  - vault 파일 정상 읽힘: influencer=`['garyblack00']`, us_items=`['ETHU']`, kr_stocks=`['035420']`
+  - Twitter, F&G/VIX/10Y, 13F 캐시, LLM 분석, Telegram 알림 모두 정상.
+  - KR 데이터 `No data (holiday or weekend?)` 경고 → 토요일 조회라 정상 동작.
+- **`./deploy.sh`**: cron 등록 완료.
+
 ## 📈 Next Steps (Planned Improvements)
 - **Phase 2**: 경제지표 캘린더 (CPI, PPI, FOMC, 10Y 금리) 수집 및 분석.
 - **Phase 3**: matplotlib 차트 + SQLite/CSV 히스토리 기반 트렌드 시각화.
@@ -116,28 +126,7 @@
 - **Engagement Filtering**: 좋아요/리트윗 수 기준으로 트윗 우선순위 필터링.
 
 ---
-*All changes have been committed and pushed to the main branch.*  
-**서버 반영 (전체 순서):**
-```bash
-# 1. stockdog 최신 pull
-cd ~/service/stockdog && git pull
-
-# 2. skyler 클론 (형제 위치)
-cd ~/service
-source stockdog/.env
-git clone https://${GITHUB_PAT}@github.com/sungho-seo/skyler.git skyler
-
-# 3. .env에 DATA_GO_KR_API_KEY 추가 (~/service/.env)
-
-# 4. Docker 이미지 재빌드
-cd ~/service/stockdog/stockdog-core && docker compose build
-
-# 5. 샘플 실행으로 전체 파이프라인 검증
-docker compose run --rm stockdog python main.py --sample
-
-# 6. cron 업데이트
-./deploy.sh
-```
+*All changes committed and pushed. Server fully deployed.*
 
 ---
 
