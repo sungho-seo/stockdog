@@ -1,20 +1,44 @@
 #!/bin/bash
 
-echo "🐾 Setting up StockDog Cron Job for Ubuntu..."
+echo "🐾 Setting up StockDog Cron Jobs for Ubuntu..."
 
 # Get the absolute path of the directory containing this script
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd $DIR
 
-# Define the cron job: Run docker-compose up every day at 17:00 (5 PM server time)
-CRON_JOB="0 17 * * * cd $DIR && /usr/bin/docker-compose up --build >> $DIR/cron_stockdog.log 2>&1"
+# ── Cron Job 1: Main Pipeline ──────────────────────────────────────
+# Run daily at 17:00 UTC (= 02:00 KST next day) for tweet/report analysis
+CRON_MAIN="0 17 * * * cd $DIR && /usr/bin/docker compose run --rm stockdog python main.py >> $DIR/cron_stockdog.log 2>&1"
 
-# Check if cron job already exists, if not, add it
-if crontab -l 2>/dev/null | grep -Fq "cron_stockdog.log"; then
-    echo "⚠️ Cron job already exists!"
+# ── Cron Job 2: Fear & Greed at US Market Open ────────────────────
+# Run Mon-Fri at 13:30 UTC (= 09:30 ET = 22:30 KST)
+CRON_FG="30 13 * * 1-5 cd $DIR && /usr/bin/docker compose run --rm stockdog python fear_greed_job.py >> $DIR/cron_fear_greed.log 2>&1"
+
+# Install cron jobs (idempotent)
+CURRENT_CRON=$(crontab -l 2>/dev/null || echo "")
+
+if echo "$CURRENT_CRON" | grep -Fq "cron_stockdog.log"; then
+    echo "⚠️  Main pipeline cron already exists."
 else
-    (crontab -l 2>/dev/null; echo "$CRON_JOB") | crontab -
-    echo "✅ Cron job added! StockDog will run daily at 17:00 server time."
+    CURRENT_CRON="$CURRENT_CRON
+$CRON_MAIN"
+    echo "✅ Main pipeline cron added (daily 17:00 UTC)."
 fi
 
-echo "To manually trigger a run now, execute: docker-compose up --build"
+if echo "$CURRENT_CRON" | grep -Fq "cron_fear_greed.log"; then
+    echo "⚠️  Fear & Greed cron already exists."
+else
+    CURRENT_CRON="$CURRENT_CRON
+$CRON_FG"
+    echo "✅ Fear & Greed cron added (Mon-Fri 13:30 UTC = 09:30 ET)."
+fi
+
+echo "$CURRENT_CRON" | crontab -
+
+echo ""
+echo "📋 Current crontab:"
+crontab -l
+echo ""
+echo "To manually trigger:"
+echo "  Main:   docker compose run --rm stockdog python main.py"
+echo "  F&G:    docker compose run --rm stockdog python fear_greed_job.py"
