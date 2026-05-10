@@ -11,7 +11,7 @@ services:
     volumes:
       # Map the config file so you can update influencers without rebuilding the container
       - ./config.yaml:/app/config.yaml
-      
+      - ./cache:/app/cache
 
       # VERY IMPORTANT: Volume mapping for the Obsidian Markdown files.
       # Left side (Host): The path to your private 'skyler' github repo clone on the Ubuntu server.

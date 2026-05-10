@@ -7,8 +7,8 @@ DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd $DIR
 
 # ── Cron Job 1: Main Pipeline ──────────────────────────────────────
-# Run daily at 17:00 UTC (= 02:00 KST next day) for tweet/report analysis
-CRON_MAIN="0 17 * * * cd $DIR && /usr/bin/docker compose run --rm stockdog python main.py >> $DIR/cron_stockdog.log 2>&1"
+# Run daily at 02:00 UTC (= 11:00 KST) — after US after-hours market close
+CRON_MAIN="0 2 * * * cd $DIR && /usr/bin/docker compose run --rm stockdog python main.py >> $DIR/cron_stockdog.log 2>&1"
 
 # ── Cron Job 2: Fear & Greed at US Market Open ────────────────────
 # Run Mon-Fri at 13:30 UTC (= 09:30 ET = 22:30 KST)

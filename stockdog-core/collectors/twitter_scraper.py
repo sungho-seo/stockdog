@@ -1,6 +1,7 @@
 import os
 import requests
 import logging
+from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -18,14 +19,17 @@ def get_influencer_tweets(influencer_handles, limit_per_user=5):
 
     results = {}
     headers = {"Authorization": f"Bearer {GETXAPI_KEY}"}
-    
+
+    # Capture the past 24 hours (UTC) — covers a full US trading day when run at 02:00 UTC
+    since_date = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
+
     for handle in influencer_handles:
         print(f"Fetching tweets for @{handle}...")
         user_tweets = []
-        
+
         try:
             params = {
-                "q": f"from:{handle}",
+                "q": f"from:{handle} since:{since_date}",
                 "product": "Latest"
             }
             

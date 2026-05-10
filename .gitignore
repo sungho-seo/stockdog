@@ -1,6 +1,9 @@
 # Obsidian Vault (Results Folder)
 skyler/
 
+# 13F cache
+stockdog-core/cache/
+
 # OS specific
 .DS_Store
 Thumbs.db

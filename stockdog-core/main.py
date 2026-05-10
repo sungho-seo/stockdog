@@ -1,6 +1,7 @@
 import os
 import yaml
 import logging
+import argparse
 from dotenv import load_dotenv
 
 # Import Phase 2 Collectors
@@ -20,16 +21,26 @@ def load_config(config_path="config.yaml"):
         return yaml.safe_load(f)
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--sample", action="store_true", help="Sample mode: 1 influencer + 1 ticker only")
+    args = parser.parse_args()
+
     print("🐾 Starting StockDog Core Pipeline...")
-    
+
     # Load environment variables (API keys)
     load_dotenv()
-    
+
     # Load configuration
     config = load_config()
     influencers = config.get('twitter_influencers', [])
     portfolio = config.get('portfolio_13f', [])
-    print(f"Loaded config: Monitoring {len(influencers)} influencers and {len(portfolio)} tickers.")
+
+    if args.sample:
+        influencers = influencers[:1]
+        portfolio = portfolio[:1]
+        print(f"[SAMPLE MODE] 1 influencer ({influencers[0]}), 1 ticker ({portfolio[0]})")
+    else:
+        print(f"Loaded config: Monitoring {len(influencers)} influencers and {len(portfolio)} tickers.")
     
     # --- Phase 2: Data Collection ---
     print("\n--- Phase 2: Data Collection ---")
