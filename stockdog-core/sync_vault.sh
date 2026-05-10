@@ -1,12 +1,17 @@
 #!/bin/bash
 # Pushes daily Markdown reports to the skyler vault on GitHub.
-# Run after main.py completes. Media files (images) are excluded.
+# Local structure (daily-market/) is preserved as-is on the server.
+# GitHub target path: raw/stockdog/daily-market/YYYY-MM-DD/
 
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 VAULT_DIR="$DIR/../skyler"
 DATE=$(date +%Y-%m-%d)
 
-# Load API keys and tokens from shared repo-root .env
+# Local source / GitHub target
+SRC="$VAULT_DIR/daily-market/$DATE"
+DEST="$VAULT_DIR/raw/stockdog/daily-market/$DATE"
+
+# Load shared .env
 set -a; source "$DIR/../.env"; set +a
 
 send_telegram() {
@@ -21,9 +26,18 @@ cd "$VAULT_DIR" || {
     exit 1
 }
 
-# Stage all report files, then unstage media/ (images)
-git add daily-market/
-git restore --staged -- "daily-market/*/media/" 2>/dev/null || true
+# Copy today's .md files to the GitHub target path (exclude media/)
+if [ ! -d "$SRC" ]; then
+    echo "Source directory not found: $SRC"
+    send_telegram "⚠️ Vault sync failed: no report found for $DATE"
+    exit 1
+fi
+
+mkdir -p "$DEST"
+cp "$SRC"/*.md "$DEST/" 2>/dev/null
+
+# Stage only the target path
+git add "raw/stockdog/daily-market/$DATE/"
 
 # Skip if nothing changed
 if git diff --cached --quiet; then
@@ -33,9 +47,9 @@ fi
 
 git commit -m "Daily report $DATE"
 
-# Push using GITHUB_PAT for authentication (works for both public and private repo)
-if git push "https://${GITHUB_PAT}@github.com/sungho-seo/skyler.git" main 2>&1; then
-    send_telegram "📤 *Vault synced*\n\`daily-market/$DATE\` → GitHub"
+# Push to master branch using GITHUB_PAT
+if git push "https://${GITHUB_PAT}@github.com/sungho-seo/skyler.git" master 2>&1; then
+    send_telegram "📤 *Vault synced*\n\`raw/stockdog/daily-market/$DATE\` → GitHub"
     echo "✅ Vault synced: $DATE"
 else
     send_telegram "⚠️ Vault sync failed on git push. Check cron_stockdog.log."
