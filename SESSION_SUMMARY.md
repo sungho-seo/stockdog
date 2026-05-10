@@ -32,6 +32,27 @@
 - **인프라**: `docker-compose.yml`에 `./cache:/app/cache` 볼륨 마운트 추가로 컨테이너 재시작 후에도 캐시 유지.
 - **강제 갱신**: `cache/13f_cache.json` 삭제 시 다음 실행에서 재호출.
 
+### 6. skyler 볼트 자동 GitHub Push
+- **배경**: 매일 생성된 리포트를 수동으로 skyler 레포에 옮기는 비효율 제거.
+- **해결**: `sync_vault.sh` 신규 작성. 파이프라인 완료 후 자동 실행.
+  - 로컬 `daily-market/YYYY-MM-DD/*.md`를 GitHub 경로 `raw/stockdog/daily-market/YYYY-MM-DD/`로 복사 후 push.
+  - 이미지(`media/`) 제외.
+  - push 성공/실패 여부 Telegram 알림.
+  - `deploy.sh` cron에 `&& bash sync_vault.sh` 체이닝.
+- **브랜치**: skyler 레포 `master` 브랜치 기준.
+- **서버 로컬 구조는 기존 유지** (`daily-market/YYYY-MM-DD/`).
+
+### 7. .env 통합
+- **배경**: `stockdog-core/.env`와 `telebot/.env`가 대부분 동일한 키를 중복 관리.
+- **해결**: 두 파일을 레포 루트 `.env` 하나로 통합.
+  - `stockdog-core/docker-compose.yml`, `telebot/docker-compose.yml` 모두 `../.env` 참조로 변경.
+  - `sync_vault.sh`도 `$DIR/../.env` 참조.
+  - `GETXAPI_KEY`는 stockdog-core 전용, 나머지는 공유.
+
+### 8. Shell 스크립트 실행 권한 git 반영
+- `deploy.sh`, `sync_vault.sh` 모두 `git update-index --chmod=+x`로 실행 권한 커밋.
+- 서버 pull 후 별도 `chmod +x` 불필요.
+
 ---
 
 ## 📈 Next Steps (Planned Improvements)
@@ -41,7 +62,13 @@
 
 ---
 *All changes have been committed and pushed to the main branch.*  
-**서버 반영:** `git pull origin main && ./deploy.sh && docker compose up -d --build`
+**서버 반영:**
+```bash
+cd ~/service/stockdog && git pull
+# .env 통합: 두 .env 내용을 루트로 병합 후 기존 파일 삭제
+# telebot 재시작: cd telebot && docker compose up -d --build
+# cron 업데이트: cd stockdog-core && ./deploy.sh
+```
 
 ---
 
