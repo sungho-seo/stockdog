@@ -125,6 +125,18 @@
 - **Prompt Engineering**: Gemini 프롬프트에 `📊 Earnings & Upgrades` 섹션 추가.
 - **Engagement Filtering**: 좋아요/리트윗 수 기준으로 트윗 우선순위 필터링.
 
+### 15. 리포트 저장 경로 단순화 (2026-05-11)
+- **문제**: 파이프라인이 `skyler/daily-market/`에 쓰고, sync_vault.sh가 `raw/stockdog/daily-market/`으로 복사하는 불필요한 2단계 구조.
+- **해결**: `config.yaml` `base_dir`을 `/notes/raw/stockdog/daily-market`으로 변경 → 파이프라인이 처음부터 raw 경로에 직접 씀.
+- **효과**: `skyler/daily-market/` 폴더 사라짐, sync_vault.sh 복사 단계 제거, 구조 단순화.
+
+### 16. session summary 워크플로우 개선 (2026-05-11)
+- **문제**: summary 업데이트 → stockdog push → 서버 pull → sync_summary.sh 실행의 번거로운 흐름.
+- **해결**: Claude Code가 로컬 Obsidian 볼트(`C:\Work\Obsidian\Skyler\raw\stockdog\session_summaries\stockdog.md`)에 직접 씀.
+- **효과**: Obsidian이 GitHub으로 자동 sync → 서버는 skyler `git pull`로 수신. sync_summary.sh 불필요.
+- **sync_vault.sh**: session_summaries 복사 단계 제거 (Claude Code가 직접 Obsidian에 쓰므로 중복).
+- **stockdog repo**: `session_summaries/stockdog.md` 계속 유지 (개발 이력 추적용).
+
 ---
 *All changes committed and pushed. Server fully deployed.*
 

@@ -28,12 +28,8 @@ if [ ! -d "raw/stockdog/daily-market/$DATE" ]; then
     exit 1
 fi
 
-# Copy session summary
-mkdir -p "raw/stockdog/session_summaries"
-cp "$DIR/../session_summaries/stockdog.md" "raw/stockdog/session_summaries/stockdog.md" 2>/dev/null
-
-# Stage target paths
-git add "raw/stockdog/daily-market/$DATE/" "raw/stockdog/session_summaries/"
+# Stage daily report
+git add "raw/stockdog/daily-market/$DATE/"
 
 # Skip if nothing changed
 if git diff --cached --quiet; then
