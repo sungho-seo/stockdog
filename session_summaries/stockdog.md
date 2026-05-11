@@ -177,6 +177,30 @@
 - `start_agents.sh`: tmux 6-pane 하네스 실행 스크립트
 - GitHub: `sungho-seo/Skyler-Agents` (private) 생성 및 push 완료
 
+### 21. Orchestrator 자율 에이전트 시스템 구축 (2026-05-12)
+- **목표**: 사용자가 Orchestrator에 지시하면, 에이전트들이 자율적으로 협력·분배·반대의견 제시.
+- **핵심 결정**: Python API 호출 대신 Claude Code **Agent tool** 사용 → Claude Code Max 플랜 내 처리, 추가 API 비용 없음.
+- **아키텍처**:
+  ```
+  사용자 → Orchestrator (Agent tool 사용)
+               ↓ spawn
+       analyst / obsidian / stockdog / quality / planner / notifier / memory
+  ```
+- **Orchestrator 강화**:
+  - PC 부팅 시 startup routine (git pull → shared.md 읽기 → 상태 보고)
+  - 지시 처리 순서: 이해 확인 → 반대 의견 → 계획 제시 → 실행 → 결과 보고
+  - **Pushback protocol**: 기술적 오류/범위 과도/리소스 낭비 시 실행 전 명시적 이의 제기
+- **서브에이전트 계약**: 모든 에이전트에 Input/Output 포맷 표준화
+  - analyst: Key Signals + Market Context + Flags
+  - quality: approved | changes_requested | blocked (veto power)
+  - obsidian: vault 구조 규칙 명시 (`raw/` 읽기 전용, `_system/` 수정 승인 필수)
+  - planner: Recommendation + Tradeoffs + Concerns 구조
+- **Windows Terminal 하네스 개선**:
+  - `start_agents.bat`: Windows Terminal 외부에서 실행 (데드락 방지)
+  - 경로 따옴표 문제 수정 (single → escaped double quote)
+  - 2x4 전체 분할 레이아웃 (`--size` 플래그로 균등 분할)
+  - 폰트 조절: `Ctrl+-` / `Ctrl++` 또는 settings.json `fontSize`
+
 ### 20. 에이전트별 LLM 모델 배치 (2026-05-12)
 - **기준**: 작업 복잡도에 따라 3티어로 분류.
   | 티어 | 모델 | 에이전트 |
