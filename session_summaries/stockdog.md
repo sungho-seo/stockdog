@@ -177,6 +177,16 @@
 - `start_agents.sh`: tmux 6-pane 하네스 실행 스크립트
 - GitHub: `sungho-seo/Skyler-Agents` (private) 생성 및 push 완료
 
+### 20. 에이전트별 LLM 모델 배치 (2026-05-12)
+- **기준**: 작업 복잡도에 따라 3티어로 분류.
+  | 티어 | 모델 | 에이전트 |
+  |------|------|----------|
+  | Opus 4.7 | `claude-opus-4-7` | analyst, planner |
+  | Sonnet 4.6 | `claude-sonnet-4-6` | orchestrator, quality |
+  | Haiku 4.5 | `claude-haiku-4-5-20251001` | obsidian, stockdog, notifier, memory |
+- `config.yaml`에 model 필드 추가.
+- `start_agents.sh`: 각 pane에서 `claude --model <model>` 플래그로 실행, pane 제목에 모델명 표시.
+
 ---
 *All changes committed and pushed. Server fully deployed.*
 
