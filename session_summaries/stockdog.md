@@ -142,6 +142,46 @@
 
 ---
 
+# Skyler-Agents Session Summary (2026-05-11) 🤖
+
+## 멀티 에이전트 하네스 설계 및 구축
+
+### 17. 에이전트 아키텍처 설계
+- **배경**: StockDog, Obsidian, Telebot 등 연계 서비스들을 총괄하는 에이전트 시스템 필요.
+- **결정**: `C:\Work\projects\Skyler-Agents\` 독립 레포로 생성 (StockDog, Obsidian 두 시스템에 중립적 위치).
+- **에이전트 구성** (8개):
+  | 에이전트 | 역할 |
+  |----------|------|
+  | orchestrator | 총괄, 태스크 위임, 우선순위 |
+  | analyst | 시장 데이터 해석, 인사이트 도출 |
+  | obsidian | 볼트 구조 관리, 노트 작성 |
+  | stockdog | 파이프라인 운영 모니터링 |
+  | quality | 코드 리뷰 + QA (병합) |
+  | planner | 아키텍처 결정 + 기능 설계 (병합) |
+  | notifier | Telegram 알림, 요약 생성 |
+  | memory | 에이전트 간 공유 컨텍스트 관리 |
+
+### 18. 파일 기반 통신 규약 확정
+- **태스크 라이프사이클**: `tasks/pending/` → `in_progress/` → `completed/`
+- **태스크 파일 포맷**: YAML frontmatter (id, from, to, priority, status) + Markdown body (Goal / Context / Expected Output)
+- **결과 파일 포맷**: YAML frontmatter (agent, status, completed, next_task) + Result body
+- **규칙**: 에이전트 간 직접 통신 금지, 반드시 태스크 파일 경유
+
+### 19. 레포 구조 및 초기 파일 생성
+- `CLAUDE.md`: 전체 규약 정의 (경로, 에이전트 목록, 포맷)
+- `config.yaml`: 경로 설정 + 에이전트 pane 매핑
+- `agents/{role}/CLAUDE.md`: 역할별 책임, 규칙, 에스컬레이션 정의
+- `memory/shared.md`: 시스템 상태, 경로, 활성 서비스 현황
+- `memory/decisions.md`: 아키텍처 결정 이력
+- `tasks/queue.md`: 전체 태스크 현황판
+- `start_agents.sh`: tmux 6-pane 하네스 실행 스크립트
+- GitHub: `sungho-seo/Skyler-Agents` (private) 생성 및 push 완료
+
+---
+*All changes committed and pushed. Server fully deployed.*
+
+---
+
 # StockDog Session Summary (2026-05-08) 🐾
 
 This session focused on transforming StockDog into a robust, professional-grade market monitoring system.
