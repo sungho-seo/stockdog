@@ -56,6 +56,7 @@ Structure the report as follows:
 4. ## Influencer Sentiment — consensus and conflicting opinions from Twitter
 5. ## Institutional Holdings (13F) — table of top holders for each stock
 6. ## Short-term Outlook — data-driven 2-3 day forecast
+7. ## Economic Calendar — upcoming releases table (next 7 days); if releasing_today is non-empty, add a > [!warning] callout noting the event and its potential market impact
 """
 
     human_message = """Here is today's raw data:
@@ -76,6 +77,10 @@ Structure the report as follows:
 {twitter}
 </Twitter>
 
+<Economic_Calendar>
+{econ_calendar}
+</Economic_Calendar>
+
 Generate the Obsidian Markdown report."""
 
     return _invoke(llm, system_instruction, human_message, {
@@ -83,6 +88,7 @@ Generate the Obsidian Markdown report."""
         "us_market": json.dumps(data.get('us_market', {}), indent=2),
         "f13": json.dumps(data.get('13f', {}), indent=2),
         "twitter": json.dumps(data.get('twitter', {}), indent=2),
+        "econ_calendar": json.dumps(data.get('econ_calendar', {}), indent=2),
     })
 
 

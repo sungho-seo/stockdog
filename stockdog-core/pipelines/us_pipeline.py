@@ -3,6 +3,7 @@ from collectors.twitter_scraper import get_influencer_tweets
 from collectors.market_indicators import get_all_indicators
 from collectors.us_market import get_us_market_data
 from collectors.holdings_13f import get_all_13f_data
+from collectors.economic_calendar import get_economic_calendar
 from analysis.llm_analyzer import analyze_us_market
 from utils.markdown_generator import save_report, save_raw_twitter_data
 from utils.vault_reader import read_influencers, read_watchlist_items
@@ -31,11 +32,19 @@ class USPipeline(MarketPipeline):
         twitter_data = get_influencer_tweets(influencers)
         save_raw_twitter_data(twitter_data, self.config)
 
+        print("Fetching economic calendar (FRED)...")
+        try:
+            econ_calendar = get_economic_calendar(sample=self.sample)
+        except Exception as e:
+            print(f"[WARN] Economic calendar failed, skipping: {e}")
+            econ_calendar = {"upcoming": [], "releasing_today": [], "error": str(e)}
+
         return {
             'twitter': twitter_data,
             'indicators': get_all_indicators(),
             'us_market': get_us_market_data(us_items),
             '13f': get_all_13f_data([i['ticker'] for i in stock_items]),
+            'econ_calendar': econ_calendar,
         }
 
     def analyze(self, data: dict) -> str:
