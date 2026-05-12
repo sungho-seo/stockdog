@@ -2,36 +2,39 @@
 
 echo "🐾 Setting up StockDog Cron Jobs for Ubuntu..."
 
-# Get the absolute path of the directory containing this script
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd $DIR
 
-# ── Cron Job 1: Main Pipeline ──────────────────────────────────────
-# Run daily at 02:00 UTC (= 11:00 KST) — after US after-hours market close
-CRON_MAIN="0 2 * * * cd $DIR && git -C $DIR/../../skyler pull >> $DIR/cron_stockdog.log 2>&1; /usr/bin/docker compose run --rm stockdog python main.py >> $DIR/cron_stockdog.log 2>&1 && bash $DIR/sync_vault.sh >> $DIR/cron_stockdog.log 2>&1"
+# ── Cron Job 1: Main Pipeline ─────────────────────────────────────────
+# 17:00 KST = 08:00 UTC — vault pull → pipeline → vault push
+CRON_MAIN="0 17 * * * cd $DIR && git -C $DIR/../../skyler pull >> $DIR/cron_stockdog.log 2>&1; /usr/bin/docker compose run --rm stockdog python main.py >> $DIR/cron_stockdog.log 2>&1 && bash $DIR/sync_vault.sh >> $DIR/cron_stockdog.log 2>&1"
 
-# ── Cron Job 2: Fear & Greed at US Market Open ────────────────────
-# Run Mon-Fri at 13:30 UTC (= 09:30 ET = 22:30 KST)
+# ── Cron Job 2: Fear & Greed at US Market Open ────────────────────────
+# 22:30 KST = 13:30 UTC = 09:30 ET (Mon-Fri)
 CRON_FG="30 13 * * 1-5 cd $DIR && /usr/bin/docker compose run --rm stockdog python fear_greed_job.py >> $DIR/cron_fear_greed.log 2>&1"
 
-# Install cron jobs (idempotent)
-CURRENT_CRON=$(crontab -l 2>/dev/null || echo "")
+# ── Cron Job 3: Vault pull — keep oracle vault in sync ────────────────
+# Every 6 hours (picks up edits made in local Obsidian)
+CRON_VAULT_PULL="0 */6 * * * cd $DIR/../../skyler && git pull >> $DIR/cron_vault_sync.log 2>&1"
 
-if echo "$CURRENT_CRON" | grep -Fq "cron_stockdog.log"; then
-    echo "⚠️  Main pipeline cron already exists."
+# ── Install: always replace main pipeline and vault pull ──────────────
+CURRENT_CRON=$(crontab -l 2>/dev/null | grep -v "cron_stockdog.log" | grep -v "cron_vault_sync.log" || true)
+
+CURRENT_CRON="${CURRENT_CRON}
+${CRON_MAIN}"
+echo "✅ Main pipeline cron set (17:00 KST = 08:00 UTC, vault pull + push)."
+
+if crontab -l 2>/dev/null | grep -Fq "cron_fear_greed.log"; then
+    echo "⚠️  Fear & Greed cron already exists, skipping."
 else
-    CURRENT_CRON="$CURRENT_CRON
-$CRON_MAIN"
-    echo "✅ Main pipeline cron added (daily 02:00 UTC + vault sync)."
+    CURRENT_CRON="${CURRENT_CRON}
+${CRON_FG}"
+    echo "✅ Fear & Greed cron added (22:30 KST Mon-Fri)."
 fi
 
-if echo "$CURRENT_CRON" | grep -Fq "cron_fear_greed.log"; then
-    echo "⚠️  Fear & Greed cron already exists."
-else
-    CURRENT_CRON="$CURRENT_CRON
-$CRON_FG"
-    echo "✅ Fear & Greed cron added (Mon-Fri 13:30 UTC = 09:30 ET)."
-fi
+CURRENT_CRON="${CURRENT_CRON}
+${CRON_VAULT_PULL}"
+echo "✅ Vault pull cron set (every 6 hours)."
 
 echo "$CURRENT_CRON" | crontab -
 
@@ -40,5 +43,6 @@ echo "📋 Current crontab:"
 crontab -l
 echo ""
 echo "To manually trigger:"
-echo "  Main:   docker compose run --rm stockdog python main.py"
-echo "  F&G:    docker compose run --rm stockdog python fear_greed_job.py"
+echo "  Main pipeline: docker compose run --rm stockdog python main.py"
+echo "  Vault sync:    bash $DIR/sync_vault.sh"
+echo "  F&G:           docker compose run --rm stockdog python fear_greed_job.py"
