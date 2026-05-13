@@ -1,20 +1,29 @@
 import os
 import requests
 import logging
-from datetime import datetime, timedelta, timezone
+
+from utils.kr_date import try_fetch_with_fallback
 
 logger = logging.getLogger(__name__)
 
 BASE_URL = "https://apis.data.go.kr/1160100/service/GetMarketIndexInfoService/getStockMarketIndex"
 
 
-def _get_base_date():
-    kst_now = datetime.now(timezone.utc) + timedelta(hours=9)
-    return (kst_now - timedelta(days=1)).strftime('%Y%m%d')
+def _parse_index_item(item):
+    """API 응답의 단일 item dict → 표준 지수 dict."""
+    close = round(float(item.get('clpr', 0)), 2)
+    vs = round(float(item.get('vs', 0)), 2)
+    prev_close = round(close - vs, 2)
+    change_pct = round(float(item.get('fltRt', 0)), 2)
+    return {
+        'close': close,
+        'prev_close': prev_close,
+        'change_pct': change_pct,
+        'volume': int(item.get('trqu', 0)),
+    }
 
 
-def fetch_kr_index(idx_name, api_key, base_date):
-    """Fetches a single Korean index value from 금융위 지수 API."""
+def _request_index(idx_name, api_key, base_date):
     params = {
         'serviceKey': api_key,
         'numOfRows': 1,
@@ -23,26 +32,29 @@ def fetch_kr_index(idx_name, api_key, base_date):
         'basDt': base_date,
         'idxNm': idx_name,
     }
-    try:
-        resp = requests.get(BASE_URL, params=params, timeout=10)
-        resp.raise_for_status()
-        items = resp.json().get('response', {}).get('body', {}).get('items', {}).get('item', [])
-        if not items:
-            return None
-        item = items[0] if isinstance(items, list) else items
-        close = round(float(item.get('clpr', 0)), 2)
-        prev_close = round(float(item.get('vs', 0)), 2)
-        prev_close = round(close - prev_close, 2)
-        change_pct = round(float(item.get('fltRt', 0)), 2)
-        return {
-            'close': close,
-            'prev_close': prev_close,
-            'change_pct': change_pct,
-            'volume': int(item.get('trqu', 0)),
-        }
-    except Exception as e:
-        logger.error(f"Failed to fetch KR index {idx_name}: {e}")
+    resp = requests.get(BASE_URL, params=params, timeout=10)
+    resp.raise_for_status()
+    items = resp.json().get('response', {}).get('body', {}).get('items', {}).get('item', [])
+    if not items:
         return None
+    item = items[0] if isinstance(items, list) else items
+    return _parse_index_item(item)
+
+
+def fetch_kr_index(idx_name, api_key, base_date=None):
+    """단일 지수 fetch. base_date=None이면 오늘 → 어제 fallback."""
+    if base_date is not None:
+        try:
+            return _request_index(idx_name, api_key, base_date)
+        except Exception as e:
+            logger.error(f"Failed to fetch KR index {idx_name} on {base_date}: {e}")
+            return None
+
+    def _do(bd):
+        return _request_index(idx_name, api_key, bd)
+
+    data, _ = try_fetch_with_fallback(_do, label=f"kr_index {idx_name}")
+    return data
 
 
 def get_kr_index_data(items):
@@ -55,20 +67,18 @@ def get_kr_index_data(items):
         logger.error("DATA_GO_KR_API_KEY not set in .env")
         return {}
 
-    base_date = _get_base_date()
-    results = {}
-
     # Map watchlist ticker → API index name
     index_name_map = {
         'KOSPI': '코스피',
         'KOSDAQ': '코스닥',
     }
 
+    results = {}
     for item in items:
         ticker = item['ticker']
         idx_name = index_name_map.get(ticker, ticker)
         print(f"Fetching KR index data for {idx_name}...")
-        data = fetch_kr_index(idx_name, api_key, base_date)
+        data = fetch_kr_index(idx_name, api_key)
         if data:
             results[ticker] = {
                 'name': item['name'],
@@ -76,6 +86,6 @@ def get_kr_index_data(items):
                 **data,
             }
         else:
-            logger.warning(f"No index data for {idx_name} on {base_date}")
+            logger.warning(f"No index data for {idx_name} (오늘·어제 모두 실패)")
 
     return results

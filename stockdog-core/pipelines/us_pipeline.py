@@ -15,6 +15,21 @@ import json
 
 class USPipeline(MarketPipeline):
 
+    def _compute_status(self, data: dict) -> str:
+        """
+        US 리포트 status 판단.
+        - failed: indicators 또는 us_market 둘 다 비어있음
+        - partial: us_market 비어있거나 indicators 빈약
+        - complete: 그 외 정상 (13F·influencer quiet 등은 정상으로 간주)
+        """
+        indicators = data.get('indicators', {}) or {}
+        us_market = data.get('us_market', {}) or {}
+        if not indicators and not us_market:
+            return "failed"
+        if not us_market or not indicators:
+            return "partial"
+        return "complete"
+
     def collect(self) -> dict:
         vault = self.config.get('vault', {})
 
@@ -52,10 +67,12 @@ class USPipeline(MarketPipeline):
         return data
 
     def analyze(self, data: dict) -> str:
+        self._last_data = data
         return analyze_us_market(data)
 
     def save(self, report: str) -> None:
-        report_path = save_report(report, self.config, region="US")
+        status = self._compute_status(getattr(self, '_last_data', {}) or {})
+        report_path = save_report(report, self.config, region="US", status=status)
         try:
             _, media_dir, date_str = _get_daily_dirs(self.config)
             save_indicators(self._indicators)

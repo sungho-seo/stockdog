@@ -24,24 +24,41 @@ def _get_daily_dirs(config):
     return date_dir, media_dir, date_str
 
 
-def save_report(content, config, region="US"):
+VALID_STATUSES = {"complete", "partial", "failed"}
+
+
+def save_report(content, config, region="US", status="complete"):
     """
     Saves an LLM-generated report with Obsidian frontmatter.
     region: 'US' or 'KR'
+    status: 'complete' | 'partial' | 'failed' — brief/quality 측 분기용.
+        complete: 핵심 데이터 모두 수신
+        partial : 일부 필드 N/A (13F·influencer quiet 등 normal 케이스 포함)
+        failed  : 핵심 데이터 부재 (예: KR에서 KOSPI/KOSDAQ 둘 다 N/A)
     Output: /notes/daily-market/YYYY-MM-DD/Market_Report_{region}_YYYY-MM-DD.md
     """
+    if status not in VALID_STATUSES:
+        logger.warning(f"Invalid status {status!r}, defaulting to 'complete'")
+        status = "complete"
+
     try:
         date_dir, _, date_str = _get_daily_dirs(config)
         filename = f"Market_Report_{region}_{date_str}.md"
         filepath = os.path.join(date_dir, filename)
 
         tag = "market-report-us" if region == "US" else "market-report-kr"
-        frontmatter = f"---\ntags:\n  - {tag}\n  - stockdog\ndate: {date_str}\n---\n\n"
+        frontmatter = (
+            "---\n"
+            f"tags:\n  - {tag}\n  - stockdog\n"
+            f"date: {date_str}\n"
+            f"status: {status}\n"
+            "---\n\n"
+        )
 
         with open(filepath, "w", encoding="utf-8") as f:
             f.write(frontmatter + content)
 
-        print(f"✅ Saved {filename}")
+        print(f"✅ Saved {filename} (status={status})")
         return filepath
     except Exception as e:
         logger.error(f"Failed to save {region} report: {e}")

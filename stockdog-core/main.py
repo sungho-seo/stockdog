@@ -15,19 +15,37 @@ def load_config(config_path="config.yaml"):
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--sample", action="store_true", help="Sample mode: minimal API calls for dev verification")
+    parser = argparse.ArgumentParser(description="StockDog daily pipeline runner")
+    parser.add_argument(
+        "--sample",
+        action="store_true",
+        help="Sample mode: minimal API calls for dev verification",
+    )
+    parser.add_argument(
+        "--region",
+        choices=["us", "kr", "both"],
+        default="both",
+        help="Which pipeline to run (default: both — backward compatible)",
+    )
     args = parser.parse_args()
 
     load_dotenv()
     config = load_config()
 
-    print("🐾 Starting StockDog...")
+    region = args.region.lower()
+    print(f"🐾 Starting StockDog... (region={region}, sample={args.sample})")
 
-    USPipeline(config, sample=args.sample).run()
-    KRPipeline(config, sample=args.sample).run()
+    if region in ("us", "both"):
+        USPipeline(config, sample=args.sample).run()
+    if region in ("kr", "both"):
+        KRPipeline(config, sample=args.sample).run()
 
-    print("\n🐾 StockDog run complete.")
+    if region == "us":
+        print("\n🐾 StockDog US-only run complete.")
+    elif region == "kr":
+        print("\n🐾 StockDog KR-only run complete.")
+    else:
+        print("\n🐾 StockDog run complete.")
 
 
 if __name__ == "__main__":
