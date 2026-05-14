@@ -24,14 +24,20 @@ def _parse_stock_item(item):
 
 
 def _request_stock(srtn_cd, api_key, base_date):
-    """단일 호출. 결과 없으면 None, 예외는 caller로 raise."""
+    """단일 호출. 결과 없으면 None, 예외는 caller로 raise.
+
+    주의: data.go.kr Open API는 'srtnCd' 키를 정확 매치 필터로 인식하지 못한다.
+    'srtnCd'를 쓰면 필터가 무시되고 전체 리스트의 첫 종목이 반환되는 버그가 있다.
+    따라서 'likeSrtnCd' (LIKE 매치)를 쓰고, 응답 item의 srtnCd가 요청 코드와
+    일치하는지 sanity check로 추가 검증한다.
+    """
     params = {
         'serviceKey': api_key,
         'numOfRows': 1,
         'pageNo': 1,
         'resultType': 'json',
         'basDt': base_date,
-        'srtnCd': srtn_cd,
+        'likeSrtnCd': srtn_cd,
     }
     resp = requests.get(BASE_URL, params=params, timeout=10)
     resp.raise_for_status()
@@ -39,6 +45,17 @@ def _request_stock(srtn_cd, api_key, base_date):
     if not items:
         return None
     item = items[0] if isinstance(items, list) else items
+
+    # Sanity check: 응답이 실제로 요청한 종목코드인지 확인.
+    # 불일치 시 None 반환 → caller의 fallback 로직(yesterday 등)이 동작.
+    resp_srtn_cd = str(item.get('srtnCd', '')).strip()
+    if resp_srtn_cd != str(srtn_cd).strip():
+        logger.warning(
+            f"kr_stock srtnCd mismatch: requested={srtn_cd} got={resp_srtn_cd} "
+            f"(base_date={base_date}) — API 필터 실패 가능성, 결과 폐기"
+        )
+        return None
+
     return _parse_stock_item(item)
 
 
