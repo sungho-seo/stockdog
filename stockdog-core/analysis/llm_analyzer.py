@@ -42,21 +42,24 @@ def analyze_us_market(data):
         return "Error: LLM not configured."
 
     system_instruction = """
-You are an expert US financial analyst. Analyze the provided market data and generate a structured daily report in Obsidian-flavored Markdown.
+당신은 전문 미국 시장 분석가입니다. 제공된 데이터를 분석하여 한국어로 작성된 Obsidian Markdown 리포트를 생성하세요.
 
-Use these formatting elements:
-- Headers (##, ###)
-- Tables for price data and 13F holdings
-- Obsidian callouts: > [!summary], > [!warning], > [!info], > [!tip]
+단정적 권유 표현('매수', '매도')은 사용하지 말고 '시그널', '관찰 포인트', '리스크' 등 관찰자 톤으로 작성하세요.
+티커·가격·종목명·기관명은 영문 원문을 그대로 유지하세요 (예: SPY, NVIDIA, BlackRock).
 
-Structure the report as follows:
-1. > [!summary] Executive Summary — overall market mood in 3-5 sentences
-2. ## Market Indicators — F&G, VIX, 10Y Yield with interpretation
-3. ## Portfolio Snapshot — table of all US stocks/ETFs/indices: name, price, change%, brief note
-4. ## Influencer Sentiment — consensus and conflicting opinions from Twitter
-5. ## Institutional Holdings (13F) — table of top holders for each stock
-6. ## Short-term Outlook — data-driven 2-3 day forecast
-7. ## Economic Calendar — upcoming releases table (next 7 days); if releasing_today is non-empty, add a > [!warning] callout noting the event and its potential market impact
+사용 형식 요소:
+- 헤더 (##, ###)
+- 가격 데이터 및 13F 보유 현황 테이블
+- Obsidian 콜아웃: > [!summary], > [!warning], > [!info], > [!tip]
+
+리포트 구조 (이 순서와 한글 헤더를 정확히 따를 것):
+1. > [!summary] 시장 요약 — 오늘 미국 시장 전반적 흐름 (3-5문장)
+2. ## 시장 지표 — F&G, VIX, 10Y Yield 해석 포함
+3. ## 포트폴리오 스냅샷 — 미국 주식/ETF/지수 테이블 (컬럼: 종목 | 이름 | 가격 | 등락률 | 메모). 종목·이름은 영문 원문 유지.
+4. ## 인플루언서 심리 — Twitter 합의된 견해와 충돌된 견해
+5. ## 기관 보유 (13F) — 종목별 상위 보유 기관 테이블. 기관명은 영문 원문 유지.
+6. ## 단기 전망 — 데이터 기반 2-3일 관찰 포인트
+7. ## 경제 캘린더 — 향후 7일 발표 일정 테이블. releasing_today가 비어있지 않으면 > [!warning] 콜아웃으로 해당 이벤트와 잠재적 시장 영향을 명시.
 """
 
     human_message = """Here is today's raw data:
@@ -81,7 +84,7 @@ Structure the report as follows:
 {econ_calendar}
 </Economic_Calendar>
 
-Generate the Obsidian Markdown report."""
+한국어로 Obsidian Markdown 리포트를 생성하세요. 단, 티커·가격·종목명·기관명은 영문 원문을 유지하세요."""
 
     return _invoke(llm, system_instruction, human_message, {
         "indicators": json.dumps(data.get('indicators', {}), indent=2),
