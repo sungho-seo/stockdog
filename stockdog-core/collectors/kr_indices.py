@@ -42,7 +42,11 @@ def _request_index(idx_name, api_key, base_date):
 
 
 def fetch_kr_index(idx_name, api_key, base_date=None):
-    """단일 지수 fetch. base_date=None이면 오늘 → 어제 fallback."""
+    """단일 지수 fetch.
+
+    base_date=None이면 오늘 → 어제 fallback, (data, base_date_used) 반환.
+    base_date가 지정되면 단일 호출 후 data만 반환(테스트용 기존 호환).
+    """
     if base_date is not None:
         try:
             return _request_index(idx_name, api_key, base_date)
@@ -53,14 +57,17 @@ def fetch_kr_index(idx_name, api_key, base_date=None):
     def _do(bd):
         return _request_index(idx_name, api_key, bd)
 
-    data, _ = try_fetch_with_fallback(_do, label=f"kr_index {idx_name}")
-    return data
+    data, base_date_used = try_fetch_with_fallback(_do, label=f"kr_index {idx_name}")
+    return data, base_date_used
 
 
 def get_kr_index_data(items):
     """
     items: list of {ticker (e.g. 'KOSPI'), name, type} — type: INDEX_KR
-    Returns: {ticker: {name, type, close, prev_close, change_pct, volume}}
+    Returns: {ticker: {name, type, close, prev_close, change_pct, volume,
+                       base_date: 'YYYYMMDD' | None}}
+    각 결과에 실제 사용된 base_date를 함께 넣어 pipeline이 frontmatter
+    data_as_of로 노출할 수 있게 한다.
     """
     api_key = os.getenv('DATA_GO_KR_API_KEY')
     if not api_key:
@@ -78,11 +85,12 @@ def get_kr_index_data(items):
         ticker = item['ticker']
         idx_name = index_name_map.get(ticker, ticker)
         print(f"Fetching KR index data for {idx_name}...")
-        data = fetch_kr_index(idx_name, api_key)
+        data, base_date_used = fetch_kr_index(idx_name, api_key)
         if data:
             results[ticker] = {
                 'name': item['name'],
                 'type': item['type'],
+                'base_date': base_date_used,
                 **data,
             }
         else:

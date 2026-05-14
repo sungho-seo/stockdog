@@ -1,3 +1,5 @@
+from collections import Counter
+
 from pipelines.base import MarketPipeline
 from collectors.kr_stocks import get_kr_stock_data
 from collectors.kr_indices import get_kr_index_data
@@ -6,6 +8,40 @@ from analysis.llm_analyzer import analyze_kr_market
 from utils.markdown_generator import save_report
 from utils.vault_reader import read_watchlist_items
 from utils.notifier import send_telegram_message
+
+
+def _yyyymmdd_to_iso(s: str) -> str:
+    """'20260513' → '2026-05-13'. 형식 이상 시 원본 반환."""
+    if not s or len(s) != 8 or not s.isdigit():
+        return s
+    return f"{s[0:4]}-{s[4:6]}-{s[6:8]}"
+
+
+def _kr_data_as_of(data: dict) -> str | None:
+    """KR 데이터에서 실제 거래일(YYYY-MM-DD) 추출.
+
+    우선순위:
+      1) KOSPI base_date (대표 지수)
+      2) KOSDAQ base_date
+      3) indices/stocks 전체에서 가장 빈도 높은 base_date (mode)
+    """
+    indices = data.get('kr_indices', {}) or {}
+    for primary in ('KOSPI', 'KOSDAQ'):
+        bd = (indices.get(primary) or {}).get('base_date')
+        if bd:
+            return _yyyymmdd_to_iso(bd)
+
+    bdates = []
+    for d in indices.values():
+        if d.get('base_date'):
+            bdates.append(d['base_date'])
+    for d in (data.get('kr_stocks', {}) or {}).values():
+        if d.get('base_date'):
+            bdates.append(d['base_date'])
+    if not bdates:
+        return None
+    most_common, _ = Counter(bdates).most_common(1)[0]
+    return _yyyymmdd_to_iso(most_common)
 
 
 class KRPipeline(MarketPipeline):
@@ -55,8 +91,10 @@ class KRPipeline(MarketPipeline):
         return analyze_kr_market(data)
 
     def save(self, report: str) -> None:
-        status = self._compute_status(getattr(self, '_last_data', {}) or {})
-        save_report(report, self.config, region="KR", status=status)
+        data = getattr(self, '_last_data', {}) or {}
+        status = self._compute_status(data)
+        data_as_of = _kr_data_as_of(data)
+        save_report(report, self.config, region="KR", status=status, data_as_of=data_as_of)
 
     def notify(self, data: dict, report: str) -> None:
         if report and not report.startswith("> [!error]") and not report.startswith("Error"):

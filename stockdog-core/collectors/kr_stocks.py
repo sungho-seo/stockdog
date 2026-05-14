@@ -62,8 +62,8 @@ def _request_stock(srtn_cd, api_key, base_date):
 def fetch_kr_stock(srtn_cd, api_key, base_date=None):
     """
     단일 종목 가격 fetch.
-    base_date를 지정하면 그 날짜만 시도(테스트용).
-    base_date=None이면 오늘 → 어제 순서로 fallback.
+    base_date를 지정하면 그 날짜만 시도(테스트용) → data 단일 반환.
+    base_date=None이면 오늘 → 어제 순서로 fallback → (data, base_date_used) 반환.
     """
     if base_date is not None:
         try:
@@ -75,14 +75,16 @@ def fetch_kr_stock(srtn_cd, api_key, base_date=None):
     def _do(bd):
         return _request_stock(srtn_cd, api_key, bd)
 
-    data, _ = try_fetch_with_fallback(_do, label=f"kr_stock {srtn_cd}")
-    return data
+    data, base_date_used = try_fetch_with_fallback(_do, label=f"kr_stock {srtn_cd}")
+    return data, base_date_used
 
 
 def get_kr_stock_data(items):
     """
     items: list of {ticker (6-digit code), name, type} — types: STOCK_KR, ETF_KR
-    Returns: {ticker: {name, type, close, prev_close, change_pct, volume, market}}
+    Returns: {ticker: {name, type, close, prev_close, change_pct, volume, market,
+                       base_date: 'YYYYMMDD' | None}}
+    각 결과에 실제 사용된 base_date 포함 (frontmatter data_as_of용).
     """
     api_key = os.getenv('DATA_GO_KR_API_KEY')
     if not api_key:
@@ -93,11 +95,12 @@ def get_kr_stock_data(items):
     for item in items:
         ticker = item['ticker']
         print(f"Fetching KR stock data for {ticker} ({item['name']})...")
-        data = fetch_kr_stock(ticker, api_key)
+        data, base_date_used = fetch_kr_stock(ticker, api_key)
         if data:
             results[ticker] = {
                 'name': item['name'],
                 'type': item['type'],
+                'base_date': base_date_used,
                 **data,
             }
         else:

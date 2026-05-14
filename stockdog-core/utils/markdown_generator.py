@@ -1,6 +1,7 @@
 import os
 from datetime import datetime
 import logging
+from typing import Optional
 import requests
 
 logger = logging.getLogger(__name__)
@@ -27,7 +28,7 @@ def _get_daily_dirs(config):
 VALID_STATUSES = {"complete", "partial", "failed"}
 
 
-def save_report(content, config, region="US", status="complete"):
+def save_report(content, config, region="US", status="complete", data_as_of: Optional[str] = None):
     """
     Saves an LLM-generated report with Obsidian frontmatter.
     region: 'US' or 'KR'
@@ -35,6 +36,9 @@ def save_report(content, config, region="US", status="complete"):
         complete: 핵심 데이터 모두 수신
         partial : 일부 필드 N/A (13F·influencer quiet 등 normal 케이스 포함)
         failed  : 핵심 데이터 부재 (예: KR에서 KOSPI/KOSDAQ 둘 다 N/A)
+    data_as_of: 실제 거래일(YYYY-MM-DD). None이면 frontmatter에 라인 생략.
+        `date`는 작성일(KST 실행일), `data_as_of`는 본문 시장 데이터의 실제 거래일.
+        KR cron은 data.go.kr 한계로 D-1 데이터를 받으므로 두 값이 다를 수 있다.
     Output: /notes/daily-market/YYYY-MM-DD/Market_Report_{region}_YYYY-MM-DD.md
     """
     if status not in VALID_STATUSES:
@@ -47,10 +51,12 @@ def save_report(content, config, region="US", status="complete"):
         filepath = os.path.join(date_dir, filename)
 
         tag = "market-report-us" if region == "US" else "market-report-kr"
+        data_as_of_line = f"data_as_of: {data_as_of}\n" if data_as_of else ""
         frontmatter = (
             "---\n"
             f"tags:\n  - {tag}\n  - stockdog\n"
             f"date: {date_str}\n"
+            f"{data_as_of_line}"
             f"status: {status}\n"
             "---\n\n"
         )
@@ -58,7 +64,7 @@ def save_report(content, config, region="US", status="complete"):
         with open(filepath, "w", encoding="utf-8") as f:
             f.write(frontmatter + content)
 
-        print(f"✅ Saved {filename} (status={status})")
+        print(f"✅ Saved {filename} (status={status}, data_as_of={data_as_of or 'N/A'})")
         return filepath
     except Exception as e:
         logger.error(f"Failed to save {region} report: {e}")

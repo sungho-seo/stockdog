@@ -1,3 +1,5 @@
+from collections import Counter
+
 from pipelines.base import MarketPipeline
 from collectors.twitter_scraper import get_influencer_tweets
 from collectors.market_indicators import get_all_indicators
@@ -11,6 +13,25 @@ from utils.vault_reader import read_influencers, read_watchlist_items
 from utils.notifier import send_telegram_message
 import os
 import json
+
+
+def _us_data_as_of(data: dict) -> str | None:
+    """US 데이터에서 실제 거래일(YYYY-MM-DD) 추출.
+
+    우선순위:
+      1) SPY trade_date (대표 ETF)
+      2) us_market 전체에서 가장 빈도 높은 trade_date (mode)
+    """
+    us_market = data.get('us_market', {}) or {}
+    spy = us_market.get('SPY') or {}
+    if spy.get('trade_date'):
+        return spy['trade_date']
+
+    dates = [d['trade_date'] for d in us_market.values() if d.get('trade_date')]
+    if not dates:
+        return None
+    most_common, _ = Counter(dates).most_common(1)[0]
+    return most_common
 
 
 class USPipeline(MarketPipeline):
@@ -71,8 +92,10 @@ class USPipeline(MarketPipeline):
         return analyze_us_market(data)
 
     def save(self, report: str) -> None:
-        status = self._compute_status(getattr(self, '_last_data', {}) or {})
-        report_path = save_report(report, self.config, region="US", status=status)
+        data = getattr(self, '_last_data', {}) or {}
+        status = self._compute_status(data)
+        data_as_of = _us_data_as_of(data)
+        report_path = save_report(report, self.config, region="US", status=status, data_as_of=data_as_of)
         try:
             _, media_dir, date_str = _get_daily_dirs(self.config)
             save_indicators(self._indicators)
