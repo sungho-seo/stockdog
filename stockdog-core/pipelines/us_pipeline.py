@@ -67,8 +67,13 @@ class USPipeline(MarketPipeline):
             stock_items = stock_items[:1]
             print(f"[SAMPLE] influencer={influencers}, us_items={[i['ticker'] for i in us_items]}")
 
-        twitter_data = get_influencer_tweets(influencers)
-        save_raw_twitter_data(twitter_data, self.config)
+        twitter_cfg = self.config.get('twitter', {})
+        if twitter_cfg.get('enabled', True):  # default True for back-compat
+            twitter_data = get_influencer_tweets(influencers)
+            save_raw_twitter_data(twitter_data, self.config)
+        else:
+            print("[INFO] twitter.enabled=false — skipping influencer scraping")
+            twitter_data = {}
 
         print("Fetching economic calendar (FRED)...")
         try:
