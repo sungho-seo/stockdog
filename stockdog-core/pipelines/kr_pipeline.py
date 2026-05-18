@@ -1,4 +1,5 @@
 from collections import Counter
+from datetime import date, datetime, timedelta, timezone
 
 from pipelines.base import MarketPipeline
 from collectors.kr_stocks import get_kr_stock_data
@@ -8,6 +9,7 @@ from analysis.llm_analyzer import analyze_kr_market
 from utils.markdown_generator import save_report
 from utils.vault_reader import read_watchlist_items
 from utils.notifier import send_telegram_message
+from utils.kr_date import business_days_between
 
 
 def _yyyymmdd_to_iso(s: str) -> str:
@@ -96,7 +98,27 @@ class KRPipeline(MarketPipeline):
         data = getattr(self, '_last_data', {}) or {}
         status = self._compute_status(data)
         data_as_of = _kr_data_as_of(data)
-        save_report(report, self.config, region="KR", status=status, data_as_of=data_as_of)
+
+        # freshness 계산 + stale callout prepend (IMPR-031)
+        data_freshness = None
+        final_report = report
+        if status in ("complete", "partial") and data_as_of:
+            try:
+                data_date = datetime.strptime(data_as_of, "%Y-%m-%d").date()
+                kst_today = (datetime.now(timezone.utc) + timedelta(hours=9)).date()
+                bdays = business_days_between(kst_today, data_date)
+                data_freshness = "fresh" if bdays <= 1 else "stale"
+                if data_freshness == "stale":
+                    callout = (
+                        f"> [!info] data_as_of {data_as_of} ({bdays}영업일 전 데이터 사용) — "
+                        f"최신 거래일 데이터 미수신, fallback 사용.\n\n"
+                    )
+                    final_report = callout + report
+            except ValueError:
+                pass  # data_as_of 파싱 실패 시 freshness 표기 생략
+
+        save_report(final_report, self.config, region="KR", status=status,
+                    data_as_of=data_as_of, data_freshness=data_freshness)
 
     def notify(self, data: dict, report: str) -> None:
         if self._last_status == "failed":

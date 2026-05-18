@@ -28,7 +28,8 @@ def _get_daily_dirs(config):
 VALID_STATUSES = {"complete", "partial", "failed"}
 
 
-def save_report(content, config, region="US", status="complete", data_as_of: Optional[str] = None):
+def save_report(content, config, region="US", status="complete", data_as_of: Optional[str] = None,
+                data_freshness: Optional[str] = None):
     """
     Saves an LLM-generated report with Obsidian frontmatter.
     region: 'US' or 'KR'
@@ -39,6 +40,10 @@ def save_report(content, config, region="US", status="complete", data_as_of: Opt
     data_as_of: 실제 거래일(YYYY-MM-DD). None이면 frontmatter에 라인 생략.
         `date`는 작성일(KST 실행일), `data_as_of`는 본문 시장 데이터의 실제 거래일.
         KR cron은 data.go.kr 한계로 D-1 데이터를 받으므로 두 값이 다를 수 있다.
+    data_freshness: 'fresh' | 'stale' | None — 데이터 신선도 (IMPR-031).
+        fresh: 오늘 또는 직전 영업일 데이터 (0~1영업일 차)
+        stale: 2영업일 이상 과거 데이터 (fallback 확장으로 가져온 경우)
+        None: 미지정 (라인 생략, US 리포트 등)
     Output: /notes/daily-market/YYYY-MM-DD/Market_Report_{region}_YYYY-MM-DD.md
     """
     if status not in VALID_STATUSES:
@@ -52,11 +57,13 @@ def save_report(content, config, region="US", status="complete", data_as_of: Opt
 
         tag = "market-report-us" if region == "US" else "market-report-kr"
         data_as_of_line = f"data_as_of: {data_as_of}\n" if data_as_of else ""
+        data_freshness_line = f"data_freshness: {data_freshness}\n" if data_freshness else ""
         frontmatter = (
             "---\n"
             f"tags:\n  - {tag}\n  - stockdog\n"
             f"date: {date_str}\n"
             f"{data_as_of_line}"
+            f"{data_freshness_line}"
             f"status: {status}\n"
             "---\n\n"
         )
@@ -64,7 +71,7 @@ def save_report(content, config, region="US", status="complete", data_as_of: Opt
         with open(filepath, "w", encoding="utf-8") as f:
             f.write(frontmatter + content)
 
-        print(f"✅ Saved {filename} (status={status}, data_as_of={data_as_of or 'N/A'})")
+        print(f"✅ Saved {filename} (status={status}, data_as_of={data_as_of or 'N/A'}, freshness={data_freshness or 'N/A'})")
         return filepath
     except Exception as e:
         logger.error(f"Failed to save {region} report: {e}")
