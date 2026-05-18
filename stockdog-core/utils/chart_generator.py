@@ -139,6 +139,16 @@ def generate_fear_greed_gauge(score: float, rating: str, output_dir: str, date_s
         plt.tight_layout(pad=0.3)
         plt.savefig(filepath, dpi=150, bbox_inches='tight',
                     facecolor=BG, edgecolor='none')
+
+        # Also emit SVG (vector) alongside PNG; non-fatal on failure
+        filepath_svg = os.path.splitext(filepath)[0] + ".svg"
+        try:
+            plt.savefig(filepath_svg, format='svg', bbox_inches='tight',
+                        facecolor=BG, edgecolor='none')
+        except Exception as svg_err:
+            import sys
+            print(f"[chart_generator] SVG save failed: {svg_err}", file=sys.stderr)
+
         plt.close(fig)
 
         logger.info(f"Fear & Greed gauge saved to {filepath}")
