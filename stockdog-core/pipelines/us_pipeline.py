@@ -35,6 +35,8 @@ def _us_data_as_of(data: dict) -> str | None:
 
 
 class USPipeline(MarketPipeline):
+    REGION_LABEL = "US"
+    FAILED_REASON_HINT = "indicators/us_market"
 
     def _compute_status(self, data: dict) -> str:
         """
@@ -112,6 +114,9 @@ class USPipeline(MarketPipeline):
             print(f"[WARN] Trend chart step failed, ignoring: {e}")
 
     def notify(self, data: dict, report: str) -> None:
+        if self._last_status == "failed":
+            send_telegram_message("⚠️ US 데이터 수집 실패 — vault에 placeholder 저장")
+            return
         if report and not report.startswith("> [!error]") and not report.startswith("Error"):
             fgi = data.get('indicators', {}).get('fear_and_greed', {})
             score = int(round(fgi.get('score', 0))) if fgi.get('score') else 'N/A'

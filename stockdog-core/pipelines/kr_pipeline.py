@@ -45,6 +45,8 @@ def _kr_data_as_of(data: dict) -> str | None:
 
 
 class KRPipeline(MarketPipeline):
+    REGION_LABEL = "KR"
+    FAILED_REASON_HINT = "KOSPI/KOSDAQ"
 
     def _compute_status(self, data: dict) -> str:
         """
@@ -97,6 +99,9 @@ class KRPipeline(MarketPipeline):
         save_report(report, self.config, region="KR", status=status, data_as_of=data_as_of)
 
     def notify(self, data: dict, report: str) -> None:
+        if self._last_status == "failed":
+            send_telegram_message("⚠️ KR 데이터 수집 실패 — vault에 placeholder 저장")
+            return
         if report and not report.startswith("> [!error]") and not report.startswith("Error"):
             usd_krw = data.get('exchange', {}).get('USD_KRW', {})
             rate = usd_krw.get('rate', 'N/A')
