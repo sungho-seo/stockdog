@@ -18,7 +18,28 @@ def get_llm():
         return None
 
 
-def _invoke(llm, system_instruction, human_message, data_dict):
+def build_report_header(region: str, meta: dict) -> str:
+    """본문 앞에 prepend할 H1 + 메타라인 (LLM 환각 방지를 위해 코드에서 결정).
+    region: 'US' | 'KR'. meta: {'report_date','data_as_of','data_freshness'}.
+    반환: '# … 마감 기준\\n\\n*발간일 … · 데이터 기준일 … · 신선도 …*\\n\\n'
+    """
+    label = "미국 시장 리포트" if region == "US" else "한국 시장 리포트"
+    data_as_of = meta.get("data_as_of") or "unknown"
+    report_date = meta.get("report_date") or "unknown"
+    freshness = meta.get("data_freshness") or "unknown"
+    return (
+        f"# {label} ({data_as_of} 마감 기준)\n\n"
+        f"*발간일 {report_date} · 데이터 기준일 {data_as_of} · 신선도 {freshness}*\n\n"
+    )
+
+
+def _invoke(llm, system_instruction, human_message, data_dict, meta=None):
+    """meta(optional): {'report_date','data_as_of','data_freshness'} → prompts can {report_date} 등 참조."""
+    if meta:
+        # ChatPromptTemplate.from_messages가 {report_date} 등을 변수로 인식하려면 data_dict에 키가 있어야 한다.
+        merged = dict(data_dict)
+        merged.update({k: (v if v is not None else "unknown") for k, v in meta.items()})
+        data_dict = merged
     prompt = ChatPromptTemplate.from_messages([
         ("system", system_instruction),
         ("human", human_message),
@@ -33,7 +54,7 @@ def _invoke(llm, system_instruction, human_message, data_dict):
         return f"> [!error] Analysis Failed\n> {str(e)}"
 
 
-def analyze_us_market(data):
+def analyze_us_market(data, meta=None):
     """
     Generates a US market report from Twitter, indicators, us_market prices, and 13F data.
     """
@@ -52,8 +73,13 @@ def analyze_us_market(data):
 - 가격 데이터 및 13F 보유 현황 테이블
 - Obsidian 콜아웃: > [!summary], > [!warning], > [!info], > [!tip]
 
+중요 — 날짜 표기 규칙:
+- 본 리포트의 분석 대상은 {data_as_of} 마감 데이터입니다 (보고서 발간일은 {report_date}, 데이터 기준일과 다를 수 있음). H1 제목과 메타 라인은 호출 측에서 자동 prepend되니 본문에는 작성하지 말 것.
+- 모든 본문 날짜 표기는 한국어 형식 `YYYY년 M월 D일` 사용 (frontmatter는 ISO 유지).
+- > [!summary] 첫 문장은 한국어 날짜 형식으로 시작 (예: `2026년 5월 18일 미국 증시는 …`).
+
 리포트 구조 (이 순서와 한글 헤더를 정확히 따를 것):
-1. > [!summary] 시장 요약 — 오늘 미국 시장 전반적 흐름 (3-5문장)
+1. > [!summary] 시장 요약 — 오늘 미국 시장 전반적 흐름 (3-5문장). 첫 문장은 한국어 날짜 형식으로 시작.
 2. ## 시장 지표 — F&G, VIX, 10Y Yield 해석 포함
 3. ## 포트폴리오 스냅샷 — 미국 주식/ETF/지수 테이블 (컬럼: 종목 | 이름 | 가격 | 등락률 | 메모). 종목·이름은 영문 원문 유지.
 4. ## 인플루언서 심리 — Twitter 합의된 견해와 충돌된 견해.
@@ -66,6 +92,12 @@ def analyze_us_market(data):
 """
 
     human_message = """Here is today's raw data:
+
+<Report_Meta>
+report_date: {report_date}
+data_as_of: {data_as_of}
+data_freshness: {data_freshness}
+</Report_Meta>
 
 <Indicators>
 {indicators}
@@ -95,10 +127,10 @@ def analyze_us_market(data):
         "f13": json.dumps(data.get('13f', {}), indent=2),
         "twitter": json.dumps(data.get('twitter', {}), indent=2),
         "econ_calendar": json.dumps(data.get('econ_calendar', {}), indent=2),
-    })
+    }, meta=meta)
 
 
-def analyze_kr_market(data):
+def analyze_kr_market(data, meta=None):
     """
     Generates a Korean market report from KR stocks, indices, and exchange rate data.
     """
@@ -114,8 +146,13 @@ Use these formatting elements:
 - Tables for price data
 - Obsidian callouts: > [!summary], > [!warning], > [!info]
 
+중요 — 날짜 표기 규칙:
+- 본 리포트의 분석 대상은 {data_as_of} 마감 데이터입니다 (보고서 발간일은 {report_date}, 데이터 기준일과 다를 수 있음). H1 제목과 메타 라인은 호출 측에서 자동 prepend되니 본문에는 작성하지 말 것.
+- 모든 본문 날짜 표기는 한국어 형식 `YYYY년 M월 D일` 사용 (frontmatter는 ISO 유지).
+- > [!summary] 첫 문장은 한국어 날짜 형식으로 시작 (예: `2026년 5월 18일 한국 증시는 …`).
+
 Structure the report as follows:
-1. > [!summary] 시장 요약 — 오늘 한국 시장 전반적 흐름 (3-5문장)
+1. > [!summary] 시장 요약 — 오늘 한국 시장 전반적 흐름 (3-5문장). 첫 문장은 한국어 날짜 형식으로 시작.
 2. ## 주요 지수 — KOSPI, KOSDAQ 테이블 (종가, 등락률, 해석)
 3. ## 환율 — USD/KRW 현황 및 시사점
 4. ## 개별 종목 동향 — 종목별 테이블 (종목명, 종가, 등락률, 거래량, 분석)
@@ -123,6 +160,12 @@ Structure the report as follows:
 """
 
     human_message = """Here is today's Korean market data:
+
+<Report_Meta>
+report_date: {report_date}
+data_as_of: {data_as_of}
+data_freshness: {data_freshness}
+</Report_Meta>
 
 <KR_Indices>
 {kr_indices}
@@ -142,4 +185,4 @@ Generate the Obsidian Markdown report in Korean."""
         "kr_indices": json.dumps(data.get('kr_indices', {}), indent=2),
         "exchange": json.dumps(data.get('exchange', {}), indent=2),
         "kr_stocks": json.dumps(data.get('kr_stocks', {}), indent=2),
-    })
+    }, meta=meta)

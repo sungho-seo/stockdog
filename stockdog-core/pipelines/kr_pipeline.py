@@ -5,7 +5,7 @@ from pipelines.base import MarketPipeline
 from collectors.kr_stocks import get_kr_stock_data
 from collectors.kr_indices import get_kr_index_data
 from collectors.exchange_rates import get_exchange_rates
-from analysis.llm_analyzer import analyze_kr_market
+from analysis.llm_analyzer import analyze_kr_market, build_report_header
 from utils.markdown_generator import save_report
 from utils.vault_reader import read_watchlist_items
 from utils.notifier import send_telegram_message
@@ -90,9 +90,35 @@ class KRPipeline(MarketPipeline):
             'exchange': get_exchange_rates(),
         }
 
+    def _compute_freshness(self, data_as_of: str | None) -> tuple[str | None, int | None]:
+        """data_as_of(ISO) → ('fresh'|'stale'|None, business_days). 파싱 실패/None 시 (None, None)."""
+        if not data_as_of:
+            return None, None
+        try:
+            data_date = datetime.strptime(data_as_of, "%Y-%m-%d").date()
+            kst_today = (datetime.now(timezone.utc) + timedelta(hours=9)).date()
+            bdays = business_days_between(kst_today, data_date)
+            return ("fresh" if bdays <= 1 else "stale"), bdays
+        except ValueError:
+            return None, None
+
     def analyze(self, data: dict) -> str:
         self._last_data = data
-        return analyze_kr_market(data)
+        data_as_of = _kr_data_as_of(data)
+        freshness, _bdays = self._compute_freshness(data_as_of)
+        kst_today = (datetime.now(timezone.utc) + timedelta(hours=9)).date()
+        meta = {
+            "report_date": kst_today.isoformat(),
+            "data_as_of": data_as_of or "unknown",
+            "data_freshness": freshness or "unknown",
+        }
+        self._last_meta = meta
+        body = analyze_kr_market(data, meta=meta)
+        # H1 + 메타라인은 LLM 환각 방지를 위해 코드에서 prepend (IMPR-033).
+        # 단, 에러 콜아웃 응답은 그대로 두어 디버깅 흐름 유지.
+        if body and not body.startswith("> [!error]") and not body.startswith("Error"):
+            return build_report_header("KR", meta) + body
+        return body
 
     def save(self, report: str) -> None:
         data = getattr(self, '_last_data', {}) or {}
@@ -103,19 +129,13 @@ class KRPipeline(MarketPipeline):
         data_freshness = None
         final_report = report
         if status in ("complete", "partial") and data_as_of:
-            try:
-                data_date = datetime.strptime(data_as_of, "%Y-%m-%d").date()
-                kst_today = (datetime.now(timezone.utc) + timedelta(hours=9)).date()
-                bdays = business_days_between(kst_today, data_date)
-                data_freshness = "fresh" if bdays <= 1 else "stale"
-                if data_freshness == "stale":
-                    callout = (
-                        f"> [!info] data_as_of {data_as_of} ({bdays}영업일 전 데이터 사용) — "
-                        f"최신 거래일 데이터 미수신, fallback 사용.\n\n"
-                    )
-                    final_report = callout + report
-            except ValueError:
-                pass  # data_as_of 파싱 실패 시 freshness 표기 생략
+            data_freshness, bdays = self._compute_freshness(data_as_of)
+            if data_freshness == "stale":
+                callout = (
+                    f"> [!info] data_as_of {data_as_of} ({bdays}영업일 전 데이터 사용) — "
+                    f"최신 거래일 데이터 미수신, fallback 사용.\n\n"
+                )
+                final_report = callout + report
 
         save_report(final_report, self.config, region="KR", status=status,
                     data_as_of=data_as_of, data_freshness=data_freshness)

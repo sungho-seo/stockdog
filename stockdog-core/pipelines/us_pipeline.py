@@ -1,4 +1,5 @@
 from collections import Counter
+from datetime import datetime, timedelta, timezone
 
 from pipelines.base import MarketPipeline
 from collectors.twitter_scraper import get_influencer_tweets
@@ -6,7 +7,7 @@ from collectors.market_indicators import get_all_indicators
 from collectors.us_market import get_us_market_data
 from collectors.holdings_13f import get_all_13f_data
 from collectors.economic_calendar import get_economic_calendar
-from analysis.llm_analyzer import analyze_us_market
+from analysis.llm_analyzer import analyze_us_market, build_report_header
 from utils.markdown_generator import save_report, save_raw_twitter_data, _get_daily_dirs
 from utils.metrics_history import save_indicators, generate_trend_chart, append_chart_to_report
 from utils.vault_reader import read_influencers, read_watchlist_items
@@ -94,15 +95,44 @@ class USPipeline(MarketPipeline):
         self._indicators = data['indicators']
         return data
 
+    def _compute_freshness(self, data_as_of: str | None) -> str | None:
+        """US freshness: 미국은 NYSE 휴장일 캘린더 없이 calendar-day delta로 보수적 계산.
+        delta ≤ 3 days → fresh (주말 + 월요일 휴장 커버), ≥ 4 → stale.
+        파싱 실패/None 시 None 반환 (frontmatter 라인 생략)."""
+        if not data_as_of:
+            return None
+        try:
+            data_date = datetime.strptime(data_as_of, "%Y-%m-%d").date()
+            kst_today = (datetime.now(timezone.utc) + timedelta(hours=9)).date()
+            delta = abs((kst_today - data_date).days)
+            return "fresh" if delta <= 3 else "stale"
+        except ValueError:
+            return None
+
     def analyze(self, data: dict) -> str:
         self._last_data = data
-        return analyze_us_market(data)
+        data_as_of = _us_data_as_of(data)
+        freshness = self._compute_freshness(data_as_of)
+        kst_today = (datetime.now(timezone.utc) + timedelta(hours=9)).date()
+        meta = {
+            "report_date": kst_today.isoformat(),
+            "data_as_of": data_as_of or "unknown",
+            "data_freshness": freshness or "unknown",
+        }
+        self._last_meta = meta
+        body = analyze_us_market(data, meta=meta)
+        # H1 + 메타라인은 LLM 환각 방지를 위해 코드에서 prepend (IMPR-033).
+        if body and not body.startswith("> [!error]") and not body.startswith("Error"):
+            return build_report_header("US", meta) + body
+        return body
 
     def save(self, report: str) -> None:
         data = getattr(self, '_last_data', {}) or {}
         status = self._compute_status(data)
         data_as_of = _us_data_as_of(data)
-        report_path = save_report(report, self.config, region="US", status=status, data_as_of=data_as_of)
+        data_freshness = self._compute_freshness(data_as_of) if status in ("complete", "partial") else None
+        report_path = save_report(report, self.config, region="US", status=status,
+                                  data_as_of=data_as_of, data_freshness=data_freshness)
         try:
             _, media_dir, date_str = _get_daily_dirs(self.config)
             save_indicators(self._indicators)
