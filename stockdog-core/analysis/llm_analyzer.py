@@ -18,18 +18,31 @@ def get_llm():
         return None
 
 
+def _format_korean_date(iso_date: str) -> str:
+    """'2026-05-18' → '2026년 5월 18일'"""
+    if not iso_date or iso_date == "unknown":
+        return iso_date or "unknown"
+    try:
+        y, m, d = iso_date.split("-")
+        return f"{int(y)}년 {int(m)}월 {int(d)}일"
+    except (ValueError, AttributeError):
+        return iso_date
+
+
 def build_report_header(region: str, meta: dict) -> str:
     """본문 앞에 prepend할 H1 + 메타라인 (LLM 환각 방지를 위해 코드에서 결정).
     region: 'US' | 'KR'. meta: {'report_date','data_as_of','data_freshness'}.
     반환: '# … 마감 기준\\n\\n*발간일 … · 데이터 기준일 … · 신선도 …*\\n\\n'
     """
-    label = "미국 시장 리포트" if region == "US" else "한국 시장 리포트"
+    label = "일일 미국 시장 분석" if region == "US" else "일일 한국 증시 마감 브리핑"
     data_as_of = meta.get("data_as_of") or "unknown"
     report_date = meta.get("report_date") or "unknown"
     freshness = meta.get("data_freshness") or "unknown"
+    data_as_of_kr = _format_korean_date(data_as_of)
+    report_date_kr = _format_korean_date(report_date)
     return (
-        f"# {label} ({data_as_of} 마감 기준)\n\n"
-        f"*발간일 {report_date} · 데이터 기준일 {data_as_of} · 신선도 {freshness}*\n\n"
+        f"# {label} ({data_as_of_kr} 마감 기준)\n\n"
+        f"*발간일 {report_date_kr} · 데이터 기준일 {data_as_of_kr} · 신선도 {freshness}*\n\n"
     )
 
 
