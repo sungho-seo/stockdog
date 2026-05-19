@@ -5,26 +5,32 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-def fetch_fear_and_greed():
-    """
-    Fetches the current CNN Fear & Greed index using a public CNN API endpoint or scraping.
-    """
+def fetch_fear_and_greed_full():
+    """Returns raw CNN graphdata JSON dict, or None on failure."""
+    url = "https://production.dataviz.cnn.io/index/fearandgreed/graphdata"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept": "application/json"
+    }
     try:
-        # CNN uses a specific API for the index now
-        url = "https://production.dataviz.cnn.io/index/fearandgreed/graphdata"
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "Accept": "application/json"
-        }
         response = requests.get(url, headers=headers, timeout=10)
         if response.status_code == 200:
             data = response.json()
-            score = data.get('fear_and_greed', {}).get('score')
-            rating = data.get('fear_and_greed', {}).get('rating')
-            return {"score": round(score), "rating": rating}
+            if "fear_and_greed" in data:
+                return data
     except Exception as e:
-        logger.error(f"Failed to fetch Fear & Greed: {e}")
-    
+        logger.error(f"Failed to fetch F&G full: {e}")
+    return None
+
+def fetch_fear_and_greed():
+    """Compat wrapper — returns {score, rating} only."""
+    data = fetch_fear_and_greed_full()
+    if data:
+        fg = data.get("fear_and_greed", {})
+        score = fg.get("score")
+        rating = fg.get("rating")
+        if score is not None:
+            return {"score": round(score), "rating": rating}
     return {"score": None, "rating": "Unknown"}
 
 def fetch_yahoo_finance_quote(ticker):
