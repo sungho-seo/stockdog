@@ -7,6 +7,7 @@ import os
 import json
 import yaml
 import logging
+import argparse
 from datetime import datetime
 from dotenv import load_dotenv
 
@@ -22,8 +23,8 @@ def load_config(config_path="config.yaml"):
     with open(config_path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
 
-def main():
-    print("📊 Fear & Greed Job: Fetching at US market open...")
+def main(silent: bool = False):
+    print(f"📊 Fear & Greed Job: silent={silent}")
 
     load_dotenv()
     config = load_config()
@@ -40,7 +41,8 @@ def main():
         rating = "unknown"
 
     if score is None:
-        send_telegram_message("⚠️ Fear & Greed 지수를 가져올 수 없습니다.")
+        if not silent:
+            send_telegram_message("⚠️ Fear & Greed 지수를 가져올 수 없습니다.")
         print("❌ Failed to fetch Fear & Greed Index.")
         return
 
@@ -67,15 +69,20 @@ def main():
     except Exception as e:
         logger.warning(f"F&G JSON dump failed: {e}")
 
-    # Send to Telegram
-    summary = f"📊 *Fear & Greed Index* (US Market Open)\n\nScore: *{int(round(score))}* ({rating.upper()})"
-
-    if gauge_path:
-        send_telegram_photo(gauge_path, caption=summary)
+    # Send to Telegram (skip if silent)
+    if silent:
+        print("🔇 silent mode — skipping Telegram")
     else:
-        send_telegram_message(summary)
+        summary = f"📊 *Fear & Greed Index* (US Market Open)\n\nScore: *{int(round(score))}* ({rating.upper()})"
+        if gauge_path:
+            send_telegram_photo(gauge_path, caption=summary)
+        else:
+            send_telegram_message(summary)
 
     print("📊 Fear & Greed Job complete.")
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--silent", action="store_true", help="Skip Telegram notification (still writes PNG/JSON).")
+    args = parser.parse_args()
+    main(silent=args.silent)
