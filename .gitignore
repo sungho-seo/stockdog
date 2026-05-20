@@ -7,6 +7,9 @@ skyler/
 # 13F cache
 stockdog-core/cache/
 
+# Cron output logs (each cron job appends to its own log — host-only, not source)
+stockdog-core/cron_*.log
+
 # OS specific
 .DS_Store
 Thumbs.db

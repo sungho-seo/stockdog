@@ -126,11 +126,37 @@ class USPipeline(MarketPipeline):
             return build_report_header("US", meta) + body
         return body
 
+    def _append_m7_block(self, report: str) -> str:
+        """IMPR-044 P1-S5: M7 트래커 H2 블록을 LLM 본문 뒤에 append.
+
+        m7.enabled=false 또는 m7.yaml 부재 시 noop (원본 report 반환).
+        Trend chart append와 동일 패턴 — 실패해도 본 리포트 흐름 막지 않음.
+        """
+        try:
+            from utils.m7_config import load_m7_config
+            from analysis.m7_summary import summarize_m7
+            m7_cfg = load_m7_config()
+            if not m7_cfg.get("enabled", True):
+                return report
+            date_str = (datetime.now(timezone.utc) + timedelta(hours=9)).date().isoformat()
+            block = summarize_m7(date_str, m7_cfg)
+            if not block:
+                return report
+            # 본문 뒤 append (회귀 안전 — Trend chart는 file-write 후 별도 append라 충돌 없음)
+            return report.rstrip() + "\n\n" + block
+        except FileNotFoundError:
+            print("[INFO] m7.yaml not found — skipping M7 block.")
+            return report
+        except Exception as e:
+            print(f"[WARN] M7 block append failed, ignoring: {e}")
+            return report
+
     def save(self, report: str) -> None:
         data = getattr(self, '_last_data', {}) or {}
         status = self._compute_status(data)
         data_as_of = _us_data_as_of(data)
         data_freshness = self._compute_freshness(data_as_of) if status in ("complete", "partial") else None
+        report = self._append_m7_block(report)
         report_path = save_report(report, self.config, region="US", status=status,
                                   data_as_of=data_as_of, data_freshness=data_freshness)
         try:

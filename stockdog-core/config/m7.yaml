@@ -1,0 +1,55 @@
+# stockdog-core/config/m7.yaml
+# IMPR-044 Phase 1 — M7 트래커 (insider + 공매도)
+# 잠금일: 2026-05-20  /  변경 시 IMPR 신규 + 이력 기록.
+
+enabled: true
+
+tickers:
+  - symbol: AAPL
+    cik: "0000320193"
+    overrides: {}
+  - symbol: MSFT
+    cik: "0000789019"
+    overrides: {}
+  - symbol: GOOGL                # Alphabet Class A (voting). GOOG(Class C)는 동일 CIK.
+    cik: "0001652044"
+    overrides: {}
+  - symbol: AMZN
+    cik: "0001018724"
+    overrides: {}
+  - symbol: META
+    cik: "0001326801"
+    overrides: {}
+  - symbol: NVDA
+    cik: "0001045810"
+    overrides: {}
+  - symbol: TSLA
+    cik: "0001318605"
+    overrides: {}
+
+thresholds:
+  insider:
+    min_value_usd: 500000
+  short:
+    delta_pp: 5.0
+    ma_window_days: 30
+    ma_relative_pct: 20.0
+    ma_min_history_days: 10
+
+fetch:
+  sec_user_agent: "Skyler M7 Tracker nosy.seo@gmail.com"
+  edgar_request_pause_sec: 0.15
+  edgar_max_retries: 3
+  edgar_retry_backoff_sec: 2.0
+  finra_walkback_days: 3
+  form4_lookback_days: 4
+
+storage:
+  raw_base_dir: "/notes/raw/stockdog/m7"
+  per_symbol_history_cap_days: 90
+  per_day_dump_cap_days: null
+  schema_version: 1
+
+calendar:
+  source_module: "utils.us_holidays"
+  source_constant: "NYSE_HOLIDAYS_2026"
