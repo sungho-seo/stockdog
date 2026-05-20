@@ -31,6 +31,13 @@ fi
 # Stage daily report
 git add "raw/stockdog/daily-market/$DATE/"
 
+# Stage M7 tracker output (IMPR-044). m7_job.py runs separately and writes:
+#   raw/stockdog/m7/insider/$DATE.json + raw/stockdog/m7/short/$DATE.json
+#   raw/stockdog/m7/<TICKER>/{insider,short}_{history,latest}.json (×7)
+# Missing dirs are harmless — git add silently skips them when m7_job hasn't
+# run yet (e.g., emergency disable via config m7.enabled=false).
+git add "raw/stockdog/m7/" 2>/dev/null || true
+
 # Skip if nothing changed
 if git diff --cached --quiet; then
     echo "Vault sync: nothing new to push."
