@@ -78,6 +78,13 @@ class USPipeline(MarketPipeline):
             print("[INFO] twitter.enabled=false — skipping influencer scraping")
             twitter_data = {}
 
+        f13_cfg = self.config.get('f13', {})
+        if f13_cfg.get('enabled', True):  # default True for back-compat
+            f13_data = get_all_13f_data([i['ticker'] for i in stock_items])
+        else:
+            print("[INFO] f13.enabled=false — skipping 13F collection")
+            f13_data = {}
+
         print("Fetching economic calendar (FRED)...")
         try:
             econ_calendar = get_economic_calendar(sample=self.sample)
@@ -89,7 +96,7 @@ class USPipeline(MarketPipeline):
             'twitter': twitter_data,
             'indicators': get_all_indicators(),
             'us_market': get_us_market_data(us_items),
-            '13f': get_all_13f_data([i['ticker'] for i in stock_items]),
+            '13f': f13_data,
             'econ_calendar': econ_calendar,
         }
         self._indicators = data['indicators']

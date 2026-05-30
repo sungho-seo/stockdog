@@ -9,10 +9,10 @@ logger = logging.getLogger(__name__)
 
 
 def get_llm():
-    if os.getenv("GEMINI_API_KEY"):
+    if os.getenv("ANTHROPIC_API_KEY"):
+        return ChatAnthropic(model="claude-sonnet-4-6", temperature=0.2, max_tokens=8192)
+    elif os.getenv("GEMINI_API_KEY"):
         return ChatGoogleGenerativeAI(model="gemini-3-pro-preview", temperature=0.2, google_api_key=os.getenv("GEMINI_API_KEY"))
-    elif os.getenv("ANTHROPIC_API_KEY"):
-        return ChatAnthropic(model="claude-3-opus-20240229", temperature=0.2)
     else:
         logger.error("No LLM API keys found.")
         return None
@@ -100,6 +100,9 @@ def analyze_us_market(data, meta=None):
    `> [!info] Twitter 수집 비활성화 — 이번 리포트에는 인플루언서 시그널이 포함되지 않습니다.`
    추정·예상·일반론으로 빈 자리를 채우지 마세요.
 5. ## 기관 보유 (13F) — 종목별 상위 보유 기관 테이블. 기관명은 영문 원문 유지.
+   단, <13F> 블록이 비어있거나 `{{}}`이면 이 섹션 본문은 생성하지 말고 헤더 아래에 다음 콜아웃 한 줄만 출력하세요:
+   `> [!info] 13F 수집 비활성화 — 이번 리포트에는 기관 보유 데이터가 포함되지 않습니다.`
+   추정·예상·일반론으로 빈 자리를 채우지 마세요.
 6. ## 단기 전망 — 데이터 기반 2-3일 관찰 포인트
 7. ## 경제 캘린더 — 향후 7일 발표 일정 테이블. releasing_today가 비어있지 않으면 > [!warning] 콜아웃으로 해당 이벤트와 잠재적 시장 영향을 명시.
 """

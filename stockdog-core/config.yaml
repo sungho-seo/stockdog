@@ -17,3 +17,9 @@ obsidian:
 # Pipeline will still produce reports without twitter signal.
 twitter:
   enabled: false
+
+# 13F institutional holdings (yfinance)
+# Set enabled: false to skip get_all_13f_data() entirely.
+# Cache files under cache/13f_cache.json are preserved regardless.
+f13:
+  enabled: false
