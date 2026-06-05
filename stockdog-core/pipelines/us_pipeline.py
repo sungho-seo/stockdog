@@ -9,7 +9,7 @@ from collectors.holdings_13f import get_all_13f_data
 from collectors.economic_calendar import get_economic_calendar
 from analysis.llm_analyzer import analyze_us_market, build_report_header
 from utils.markdown_generator import save_report, save_raw_twitter_data, _get_daily_dirs
-from utils.metrics_history import save_indicators, generate_trend_chart, append_chart_to_report
+from utils.metrics_history import save_indicators, generate_trend_chart, append_chart_to_report, stage_metrics_snapshot
 from utils.vault_reader import read_influencers, read_watchlist_items
 from utils.notifier import send_telegram_message
 import os
@@ -169,6 +169,12 @@ class USPipeline(MarketPipeline):
         try:
             _, media_dir, date_str = _get_daily_dirs(self.config)
             save_indicators(self._indicators)
+            # Stage a vault-readable snapshot for the host-side M7 renderer
+            # (which cannot read the root-owned, gitignored metrics_history.db).
+            # base_dir is /notes/raw/stockdog/daily-market → derive m7 dir.
+            base_dir = self.config.get('obsidian', {}).get('base_dir', '/notes/raw/stockdog/daily-market')
+            m7_dir = os.path.join(os.path.dirname(base_dir), 'm7')
+            stage_metrics_snapshot(os.path.join(m7_dir, 'metrics_snapshot.json'))
             chart_path = generate_trend_chart(media_dir, date_str)
             if chart_path and report_path:
                 append_chart_to_report(report_path, os.path.basename(chart_path))
