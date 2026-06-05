@@ -150,6 +150,19 @@ def _nth_back_valid(vals, n):
     return valid[idx] if 0 <= idx < len(valid) else None
 
 
+def _last_valid_date(daily, keys):
+    """Date of the most recent daily row where ANY of `keys` is non-null.
+
+    Yields (FRED) lag ~2 business days, so daily[-1] often has USD/KRW only
+    while 2Y/10Y/30Y are still NULL. Walk back to the last row with real yield
+    data so the 기준일 matches the values actually shown, not the newest row.
+    """
+    for row in reversed(daily):
+        if any(row.get(k) is not None for k in keys):
+            return row.get("date")
+    return None
+
+
 def _building_label(n):
     return f" (~{n}d, building)" if n < BUILDING_THRESHOLD else ""
 
@@ -401,7 +414,9 @@ def main() -> int:
     inflation = snapshot.get("inflation") or {}
     updated = snapshot.get("updated", want_date)
     n = len(daily)
-    freshness = daily[-1].get("date") if daily else None
+    # 금리 곡선 기준일: last row with actual yield data (yields lag USD/KRW by
+    # ~2 business days), not daily[-1] which is often USD/KRW-only.
+    freshness = _last_valid_date(daily, ("us_2y", "macro_10y", "us_30y"))
 
     lines = []
     lines.append("---")
