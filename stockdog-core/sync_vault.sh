@@ -80,6 +80,22 @@ publish_to_garden() {
     git add "$pub_dir/"
 }
 
+# IMPR-058 Step 3 — render the M7 (insider + short) public tracker page from the
+# aggregate dated JSON and stage it. Stdlib-only renderer writes:
+#   10_Public/trackers/m7.md   (overwrite; raw/ stays read-only)
+# Non-zero exit (no M7 data for $DATE and no fallback) → skip; page unchanged.
+# Assumes CWD is the vault root (set by `cd "$VAULT_DIR"` above). git add scoped
+# to 10_Public/trackers/ ONLY — never -A.
+publish_m7_tracker() {
+    local helper="$DIR/render_m7_tracker.py"
+    [ -f "$helper" ] || return 0
+    if python3 "$helper" "$VAULT_DIR" "$DATE"; then
+        git add "10_Public/trackers/"
+    else
+        echo "[sync_vault.sh] publish_m7_tracker: no M7 data for $DATE — skip (page unchanged)"
+    fi
+}
+
 cd "$VAULT_DIR" || {
     send_telegram "⚠️ Vault sync failed: skyler directory not found at $VAULT_DIR"
     exit 1
@@ -106,6 +122,10 @@ git add "raw/stockdog/m7/" 2>/dev/null || true
 # the copies so they ride in the same daily commit. Must run AFTER the raw `git add`
 # lines and BEFORE `git commit`. raw/ stays read-only (copy OUT only).
 publish_to_garden
+
+# IMPR-058 Step 3 — render + stage the M7 tracker page (after publish_to_garden,
+# before the diff-cached check so it rides in the same daily commit).
+publish_m7_tracker
 
 # Skip if nothing changed
 if git diff --cached --quiet; then
