@@ -124,6 +124,23 @@ publish_watchlist_tracker() {
     fi
 }
 
+# IMPR-063 — render + stage the signals aggregation tracker page. This is a
+# READ-ONLY re-aggregation of the SAME snapshots the other trackers consume
+# (M7 short/insider, macro, watchlist, F&G); it stages no new raw — only the
+# rendered 10_Public/trackers/signals.md. Stdlib-only host renderer (overwrite;
+# raw/ stays read-only). Non-zero exit (ALL snapshots missing) → skip; page
+# unchanged. Must run AFTER publish_watchlist_tracker (all snapshots fresh).
+# git add scoped to 10_Public/trackers/ ONLY — never -A.
+publish_signals_tracker() {
+    local helper="$DIR/render_signals_tracker.py"
+    [ -f "$helper" ] || return 0
+    if python3 "$helper" "$VAULT_DIR" "$DATE"; then
+        git add "10_Public/trackers/"
+    else
+        echo "[sync_vault.sh] publish_signals_tracker: no snapshots for $DATE — skip (page unchanged)"
+    fi
+}
+
 cd "$VAULT_DIR" || {
     send_telegram "⚠️ Vault sync failed: skyler directory not found at $VAULT_DIR"
     exit 1
@@ -170,6 +187,10 @@ publish_macro_tracker
 
 # IMPR-062 — render + stage the watchlist tracker page (right after macro, same rules).
 publish_watchlist_tracker
+
+# IMPR-063 — render + stage the signals aggregation tracker (LAST tracker, after
+# all snapshots are fresh; read-only re-aggregation — stages no new raw).
+publish_signals_tracker
 
 # Skip if nothing changed
 if git diff --cached --quiet; then
