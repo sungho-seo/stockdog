@@ -175,6 +175,16 @@ class USPipeline(MarketPipeline):
             base_dir = self.config.get('obsidian', {}).get('base_dir', '/notes/raw/stockdog/daily-market')
             m7_dir = os.path.join(os.path.dirname(base_dir), 'm7')
             stage_metrics_snapshot(os.path.join(m7_dir, 'metrics_snapshot.json'))
+            # IMPR-062: capture watchlist price/volume from the IN-HAND us_market
+            # dict (no re-fetch) + stage a snapshot for the host-side renderer.
+            # Wrapped so a watchlist hiccup never breaks the US report.
+            try:
+                from utils.watchlist_store import save_watchlist_day, stage_watchlist_snapshot
+                wl_dir = os.path.join(os.path.dirname(base_dir), 'watchlist')
+                save_watchlist_day(wl_dir, date_str, data.get('us_market', {}) or {})
+                stage_watchlist_snapshot(wl_dir)
+            except Exception as we:
+                print(f"[WARN] Watchlist step failed, ignoring: {we}")
             # IMPR-061: persist + stage macro (rates/inflation/policy/dollar).
             # Wrapped separately so a FRED/exchange hiccup never breaks the US run.
             try:

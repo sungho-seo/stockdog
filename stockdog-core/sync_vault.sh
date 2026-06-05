@@ -110,6 +110,20 @@ publish_macro_tracker() {
     fi
 }
 
+# IMPR-062 — render + stage the watchlist tracker page from the staged watchlist
+# snapshot. Stdlib-only host renderer writes 10_Public/trackers/watchlist.md
+# (overwrite; raw/ stays read-only). Non-zero exit (no snapshot staged) → skip;
+# page unchanged. git add scoped to 10_Public/trackers/ ONLY — never -A.
+publish_watchlist_tracker() {
+    local helper="$DIR/render_watchlist_tracker.py"
+    [ -f "$helper" ] || return 0
+    if python3 "$helper" "$VAULT_DIR" "$DATE"; then
+        git add "10_Public/trackers/"
+    else
+        echo "[sync_vault.sh] publish_watchlist_tracker: no watchlist snapshot for $DATE — skip (page unchanged)"
+    fi
+}
+
 cd "$VAULT_DIR" || {
     send_telegram "⚠️ Vault sync failed: skyler directory not found at $VAULT_DIR"
     exit 1
@@ -137,6 +151,11 @@ git add "raw/stockdog/m7/" 2>/dev/null || true
 # silently skips it. raw/ stays read-only; only macro_snapshot.json lives here.
 git add "raw/stockdog/macro/" 2>/dev/null || true
 
+# IMPR-062 — stage the watchlist price/volume history + snapshot (written by the
+# US pipeline's save_watchlist_day / stage_watchlist_snapshot). Missing dir is
+# harmless. raw/ stays read-only; only the watchlist store lives here.
+git add "raw/stockdog/watchlist/" 2>/dev/null || true
+
 # IMPR-058 Step 1 — publish today's reports to the public Garden tree and stage
 # the copies so they ride in the same daily commit. Must run AFTER the raw `git add`
 # lines and BEFORE `git commit`. raw/ stays read-only (copy OUT only).
@@ -148,6 +167,9 @@ publish_m7_tracker
 
 # IMPR-061 — render + stage the macro tracker page (right after M7, same rules).
 publish_macro_tracker
+
+# IMPR-062 — render + stage the watchlist tracker page (right after macro, same rules).
+publish_watchlist_tracker
 
 # Skip if nothing changed
 if git diff --cached --quiet; then
