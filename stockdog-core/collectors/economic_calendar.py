@@ -20,6 +20,12 @@ FOMC_DATES_2026 = [
     "2026-10-28", "2026-12-16",
 ]
 
+# IMPR-061: 2027 schedule not yet published by the Fed as of build time.
+# Leave empty so the macro renderer's FOMC countdown degrades gracefully
+# (M6 fallback) instead of guessing. Populate each January from
+# https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm
+FOMC_DATES_2027 = []  # TODO confirm from federalreserve.gov
+
 
 def _fred(endpoint, params):
     params = {**params, "api_key": os.getenv("FRED_API_KEY"), "file_type": "json"}

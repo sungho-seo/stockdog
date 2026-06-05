@@ -96,6 +96,20 @@ publish_m7_tracker() {
     fi
 }
 
+# IMPR-061 — render + stage the macro tracker page from the staged macro snapshot.
+# Stdlib-only host renderer writes 10_Public/trackers/macro.md (overwrite; raw/
+# stays read-only). Non-zero exit (no snapshot staged) → skip; page unchanged.
+# git add scoped to 10_Public/trackers/ ONLY — never -A.
+publish_macro_tracker() {
+    local helper="$DIR/render_macro_tracker.py"
+    [ -f "$helper" ] || return 0
+    if python3 "$helper" "$VAULT_DIR" "$DATE"; then
+        git add "10_Public/trackers/"
+    else
+        echo "[sync_vault.sh] publish_macro_tracker: no macro snapshot for $DATE — skip (page unchanged)"
+    fi
+}
+
 cd "$VAULT_DIR" || {
     send_telegram "⚠️ Vault sync failed: skyler directory not found at $VAULT_DIR"
     exit 1
@@ -118,6 +132,11 @@ git add "raw/stockdog/daily-market/$DATE/"
 # run yet (e.g., emergency disable via config m7.enabled=false).
 git add "raw/stockdog/m7/" 2>/dev/null || true
 
+# IMPR-061 — stage the macro snapshot (staged by the US pipeline's
+# stage_macro_snapshot). Missing dir is harmless (e.g. FRED skipped) — git add
+# silently skips it. raw/ stays read-only; only macro_snapshot.json lives here.
+git add "raw/stockdog/macro/" 2>/dev/null || true
+
 # IMPR-058 Step 1 — publish today's reports to the public Garden tree and stage
 # the copies so they ride in the same daily commit. Must run AFTER the raw `git add`
 # lines and BEFORE `git commit`. raw/ stays read-only (copy OUT only).
@@ -126,6 +145,9 @@ publish_to_garden
 # IMPR-058 Step 3 — render + stage the M7 tracker page (after publish_to_garden,
 # before the diff-cached check so it rides in the same daily commit).
 publish_m7_tracker
+
+# IMPR-061 — render + stage the macro tracker page (right after M7, same rules).
+publish_macro_tracker
 
 # Skip if nothing changed
 if git diff --cached --quiet; then

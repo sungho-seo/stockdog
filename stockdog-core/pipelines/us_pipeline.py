@@ -9,7 +9,7 @@ from collectors.holdings_13f import get_all_13f_data
 from collectors.economic_calendar import get_economic_calendar
 from analysis.llm_analyzer import analyze_us_market, build_report_header
 from utils.markdown_generator import save_report, save_raw_twitter_data, _get_daily_dirs
-from utils.metrics_history import save_indicators, generate_trend_chart, append_chart_to_report, stage_metrics_snapshot
+from utils.metrics_history import save_indicators, generate_trend_chart, append_chart_to_report, stage_metrics_snapshot, save_macro, stage_macro_snapshot
 from utils.vault_reader import read_influencers, read_watchlist_items
 from utils.notifier import send_telegram_message
 import os
@@ -175,6 +175,27 @@ class USPipeline(MarketPipeline):
             base_dir = self.config.get('obsidian', {}).get('base_dir', '/notes/raw/stockdog/daily-market')
             m7_dir = os.path.join(os.path.dirname(base_dir), 'm7')
             stage_metrics_snapshot(os.path.join(m7_dir, 'metrics_snapshot.json'))
+            # IMPR-061: persist + stage macro (rates/inflation/policy/dollar).
+            # Wrapped separately so a FRED/exchange hiccup never breaks the US run.
+            try:
+                from collectors.fred_macro import get_macro_latest
+                macro_latest = get_macro_latest()
+                # Reuse the run's USD/KRW if it was collected; else fetch fresh.
+                usd_krw = None
+                fx = (data.get('exchange_rates') or {}).get('USD_KRW') or {}
+                if fx.get('rate') is not None:
+                    usd_krw = fx['rate']
+                else:
+                    try:
+                        from collectors.exchange_rates import get_exchange_rates
+                        usd_krw = (get_exchange_rates().get('USD_KRW') or {}).get('rate')
+                    except Exception as fxe:
+                        print(f"[WARN] macro USD/KRW fetch failed, continuing: {fxe}")
+                save_macro(macro_latest, usd_krw)
+                macro_dir = os.path.join(os.path.dirname(base_dir), 'macro')
+                stage_macro_snapshot(os.path.join(macro_dir, 'macro_snapshot.json'))
+            except Exception as me:
+                print(f"[WARN] Macro step failed, ignoring: {me}")
             chart_path = generate_trend_chart(media_dir, date_str)
             if chart_path and report_path:
                 append_chart_to_report(report_path, os.path.basename(chart_path))
