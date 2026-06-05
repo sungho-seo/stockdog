@@ -16,6 +16,70 @@ send_telegram() {
         -d "parse_mode=Markdown" > /dev/null
 }
 
+# IMPR-058 Step 1 — publish today's daily-market reports to the public Garden tree.
+# Forward-only: processes ONLY $DATE (today). raw/ is read-only — we copy OUT.
+# Layout owned by vault-web build: [2c] flattens 10_Public/daily-reports/ → /daily-reports/,
+# [3] strips ![[media/ → ![[ at build time. So we keep reports under 10_Public/daily-reports/
+# and leave the media/ prefix in embeds AS-IS (do NOT strip here).
+# Idempotent: DEST paths are deterministic; mkdir -p / cp overwrite; re-run never duplicates.
+# Assumes CWD is the vault root (set by the `cd "$VAULT_DIR"` above).
+publish_to_garden() {
+    local pub_dir="10_Public/daily-reports"
+    mkdir -p "$pub_dir/media"
+
+    local REGION
+    for REGION in US KR; do
+        local SRC="raw/stockdog/daily-market/$DATE/Market_Report_${REGION}_${DATE}.md"
+        # Forward-only / region-optional: skip silently if today's report for this region is absent.
+        [ -f "$SRC" ] || continue
+
+        local region title_word
+        region=$(echo "$REGION" | tr '[:upper:]' '[:lower:]')
+        case "$REGION" in
+            US) title_word="미국" ;;
+            KR) title_word="한국" ;;
+        esac
+
+        local DEST="$pub_dir/${DATE}-${region}.md"
+
+        # Write public frontmatter, then append the raw body with ONLY the leading
+        # frontmatter stripped. awk anchors to the 2nd line that is exactly `---`
+        # (NR record of the 2nd boundary), then prints everything strictly after it.
+        # This is NOT greedy-to-last: the body contains its own `---` horizontal rules
+        # which MUST survive, so we cannot strip "up to the last ---".
+        {
+            printf -- '---\n'
+            printf 'title: "일일 %s 시장 분석 — %s"\n' "$title_word" "$DATE"
+            printf 'public: true\n'
+            printf 'type: reference\n'
+            printf 'date: %s\n' "$DATE"
+            printf 'tags:\n'
+            printf '  - ctx/public\n'
+            printf '  - stockdog\n'
+            printf '  - daily-market\n'
+            printf '  - region/%s\n' "$region"
+            printf -- '---\n'
+            awk '
+                BEGIN { fm = 0 }
+                fm < 2 { if ($0 == "---") fm++; next }
+                { print }
+            ' "$SRC"
+        } > "$DEST"
+
+        # Copy referenced charts/media. Embed text stays AS-IS in DEST.
+        # Skip silently if the source media file is missing (e.g. KR reports may have none).
+        local embed mediafile msrc
+        while IFS= read -r mediafile; do
+            [ -n "$mediafile" ] || continue
+            msrc="raw/stockdog/daily-market/$DATE/media/$mediafile"
+            [ -f "$msrc" ] && cp -f "$msrc" "$pub_dir/media/$mediafile"
+        done < <(grep -oE '!\[\[media/[^]]+\]\]' "$SRC" | sed -E 's/^!\[\[media\///; s/\]\]$//')
+    done
+
+    # Tightly scoped add — NEVER `git add -A`.
+    git add "$pub_dir/"
+}
+
 cd "$VAULT_DIR" || {
     send_telegram "⚠️ Vault sync failed: skyler directory not found at $VAULT_DIR"
     exit 1
@@ -37,6 +101,11 @@ git add "raw/stockdog/daily-market/$DATE/"
 # Missing dirs are harmless — git add silently skips them when m7_job hasn't
 # run yet (e.g., emergency disable via config m7.enabled=false).
 git add "raw/stockdog/m7/" 2>/dev/null || true
+
+# IMPR-058 Step 1 — publish today's reports to the public Garden tree and stage
+# the copies so they ride in the same daily commit. Must run AFTER the raw `git add`
+# lines and BEFORE `git commit`. raw/ stays read-only (copy OUT only).
+publish_to_garden
 
 # Skip if nothing changed
 if git diff --cached --quiet; then
