@@ -141,6 +141,31 @@ publish_signals_tracker() {
     fi
 }
 
+# IMPR-067 — gated automation of the signals "오늘의 읽기" analyst layer.
+# Runs the container generator, which is itself GATED on the gate sidecar
+# (raw/stockdog/signals/signal_count.json, written by render_signals_tracker.py):
+# quiet day → ZERO LLM call. On notable days it injects the analyst read into the
+# TODAY_READ block of the ALREADY-staged signals.md.
+#
+# M1 — publish_signals_tracker staged the PLACEHOLDER block; this hook MUTATES
+# signals.md AFTERWARD, so we MUST re-`git add` it or the commit captures the
+# placeholder, not the read.
+# M2 — `docker compose` needs $DIR (stockdog-core, the compose-file dir), but
+# this script runs in $VAULT_DIR (needed for the later git commit). The `cd` is
+# isolated in a SUBSHELL so the outer CWD ($VAULT_DIR) is preserved; the re-stage
+# `git add` then runs back in $VAULT_DIR.
+# M4 — wrapped `{ ...; } || echo` so a generator/docker failure NEVER breaks the
+# publish chain (the generator already always exits 0; this is belt-and-braces).
+publish_signals_read() {
+    local gen="$DIR/generate_signals_read.py"
+    [ -f "$gen" ] || return 0
+    {
+        ( cd "$DIR" && /usr/bin/docker compose run --rm stockdog \
+            python generate_signals_read.py /notes "$DATE" )
+        git add "10_Public/trackers/signals.md"
+    } || echo "[sync_vault.sh] publish_signals_read: skipped (non-fatal)"
+}
+
 cd "$VAULT_DIR" || {
     send_telegram "⚠️ Vault sync failed: skyler directory not found at $VAULT_DIR"
     exit 1
@@ -191,6 +216,11 @@ publish_watchlist_tracker
 # IMPR-063 — render + stage the signals aggregation tracker (LAST tracker, after
 # all snapshots are fresh; read-only re-aggregation — stages no new raw).
 publish_signals_tracker
+
+# IMPR-067 — gated analyst "오늘의 읽기" into signals.md (after the tracker render
+# so the gate sidecar + placeholder exist; re-stages signals.md). Runs before the
+# diff-cached gate so the read rides in the same daily commit.
+publish_signals_read
 
 # Skip if nothing changed
 if git diff --cached --quiet; then

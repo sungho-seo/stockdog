@@ -1103,6 +1103,26 @@ def main() -> int:
 
     n_major = len(major_cs) + len(major_flags)
     n_watch = min(len(watch_all), WATCH_CAP)
+
+    # IMPR-067 — emit gate sidecar for the automated "오늘의 읽기" generator.
+    # generate_signals_read.py reads this to decide whether to call the LLM at all
+    # (notable==false → ZERO LLM call). Non-fatal: a sidecar write failure must never
+    # break the render, so OSError is swallowed (the generator then skips → safe).
+    try:
+        sig_dir = vault_root / "raw" / "stockdog" / "signals"
+        sig_dir.mkdir(parents=True, exist_ok=True)
+        (sig_dir / "signal_count.json").write_text(
+            json.dumps({
+                "date": run_date,
+                "major": n_major,
+                "watch": n_watch,
+                "notable": (n_major + n_watch) > 0,
+            }),
+            encoding="utf-8",
+        )
+    except OSError as e:
+        print(f"[render_signals_tracker] gate sidecar write skipped (non-fatal): {e}", file=sys.stderr)
+
     print(
         f"[render_signals_tracker] wrote {out_path} "
         f"(major={n_major}, watch={n_watch}, cs={len(cs_cards)}, "
