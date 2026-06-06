@@ -166,6 +166,23 @@ publish_signals_read() {
     } || echo "[sync_vault.sh] publish_signals_read: skipped (non-fatal)"
 }
 
+# IMPR-064 P1 — gated daily narrative generator.
+# Writes raw/stockdog/narrative/narrative.json (always — ok or skipped).
+# GATED: LLM called only when US daily-market report exists for $DATE AND
+# no status:ok narrative already exists for that date (idempotent).
+# No-report days → skipped, $0. Already-generated days → skipped, $0.
+# M2 — cd into $DIR (compose-file dir) isolated in a subshell; outer CWD preserved.
+# M4 — { ...; } || echo so a container/docker failure never breaks the chain.
+publish_narrative() {
+    local gen="$DIR/generate_narrative.py"
+    [ -f "$gen" ] || return 0
+    {
+        ( cd "$DIR" && /usr/bin/docker compose run --rm stockdog \
+            python generate_narrative.py /notes "$DATE" )
+        git add "raw/stockdog/narrative/narrative.json"
+    } || echo "[sync_vault.sh] publish_narrative: skipped (non-fatal)"
+}
+
 cd "$VAULT_DIR" || {
     send_telegram "⚠️ Vault sync failed: skyler directory not found at $VAULT_DIR"
     exit 1
@@ -221,6 +238,10 @@ publish_signals_tracker
 # so the gate sidecar + placeholder exist; re-stages signals.md). Runs before the
 # diff-cached gate so the read rides in the same daily commit.
 publish_signals_read
+
+# IMPR-064 P1 — gated daily narrative JSON (after signals_read so all tracker
+# pages are current; writes raw/stockdog/narrative/narrative.json).
+publish_narrative
 
 # Skip if nothing changed
 if git diff --cached --quiet; then
