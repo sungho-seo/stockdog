@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""IMPR-064 P1 — gated daily narrative generator.
+"""IMPR-064 P1+P2 — gated daily narrative generator.
 
 Generates a structured JSON narrative ("hero_oneliner", "market_narrative",
 "macro_story", "indicator_captions") from today's US daily-market report,
@@ -36,6 +36,26 @@ from pathlib import Path
 LOG = "[generate_narrative]"
 LLM_WALL_CLOCK_SECONDS = 120
 SCHEMA_VERSION = 1
+
+# M7 universe — canonical order, locked with config/m7.yaml
+_M7_TICKERS = ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "TSLA"]
+
+# Qualitative magnitude label from change_pct (None → unknown)
+def _magnitude_label(change_pct):
+    """Convert numeric change_pct to Korean qualitative label."""
+    if change_pct is None:
+        return "변화 미확인"
+    pct = float(change_pct)
+    if pct >= 3.0:
+        return "큰 폭 상승"
+    elif pct >= 1.0:
+        return "소폭 상승"
+    elif pct >= -1.0:
+        return "보합"
+    elif pct >= -3.0:
+        return "소폭 하락"
+    else:
+        return "큰 폭 하락"
 
 # Sparkline chars to strip from macro text (avoid token waste / rendering noise)
 _SPARKLINE_RE = re.compile(r"[▁▂▃▄▅▆▇█]+")
@@ -92,7 +112,7 @@ def _check_report_exists(notes_root: Path, run_date: str) -> Path | None:
 
 
 def _check_idempotent(notes_root: Path, run_date: str) -> bool:
-    """Return True if we should SKIP (already have a good narrative for today)."""
+    """Return True if we should SKIP (already have a good P1 narrative + M7 for today)."""
     out_path = notes_root / "raw" / "stockdog" / "narrative" / "narrative.json"
     if not out_path.is_file():
         return False
@@ -104,8 +124,9 @@ def _check_idempotent(notes_root: Path, run_date: str) -> bool:
         existing.get("report_date") == run_date
         and existing.get("status") == "ok"
         and existing.get("schema_version") == SCHEMA_VERSION
+        and existing.get("m7_status") == "ok"
     ):
-        log(f"narrative.json already ok for {run_date} — skip (idempotent, no LLM call)")
+        log(f"narrative.json already ok+m7_ok for {run_date} — skip (idempotent, no LLM call)")
         return True
     return False
 
@@ -291,12 +312,281 @@ def _extract_signals_excerpt(notes_root: Path) -> str:
 
 
 # ---------------------------------------------------------------------------
+# M7 source builder
+# ---------------------------------------------------------------------------
+
+def _build_m7_context(notes_root: Path, run_date: str) -> str:
+    """Build per-ticker context block for the M7 story prompt.
+
+    For each M7 ticker assembles:
+      - Price movement label from watchlist_snapshot (qualitative only)
+      - Insider flags from m7/<ticker>/insider_latest.json (breach/sell/buy)
+      - Short data flag from m7/<ticker>/short_latest.json
+      - US report mention excerpt (up to 200 chars per ticker)
+
+    Returns a text block with one section per ticker. Never raises.
+    """
+    m7_dir = notes_root / "raw" / "stockdog" / "m7"
+    wl_snapshot_path = notes_root / "raw" / "stockdog" / "watchlist" / "watchlist_snapshot.json"
+
+    # Load watchlist snapshot once
+    wl_snap_tickers = {}
+    try:
+        wl_snap = json.loads(wl_snapshot_path.read_text(encoding="utf-8"))
+        wl_snap_tickers = wl_snap.get("tickers", {})
+    except (OSError, ValueError):
+        pass
+
+    # Load US market report text once for mention search
+    report_path = (
+        notes_root / "raw" / "stockdog" / "daily-market"
+        / run_date / f"Market_Report_US_{run_date}.md"
+    )
+    report_text = ""
+    try:
+        report_text = report_path.read_text(encoding="utf-8")
+    except OSError:
+        pass
+
+    lines = []
+    for tk in _M7_TICKERS:
+        parts = [f"[{tk}]"]
+
+        # Price movement
+        tk_snap = wl_snap_tickers.get(tk, {})
+        latest = tk_snap.get("latest") or {}
+        change_pct = latest.get("change_pct")
+        direction = _magnitude_label(change_pct)
+        parts.append(f"가격움직임={direction}")
+
+        # Insider flags
+        insider_path = m7_dir / tk / "insider_latest.json"
+        try:
+            ins = json.loads(insider_path.read_text(encoding="utf-8"))
+            txns = ins.get("transactions") or []
+            breaches = [t for t in txns if t.get("breach")]
+            sells = [t for t in txns if str(t.get("action", "")).lower() == "sell"]
+            buys = [t for t in txns if str(t.get("action", "")).lower() == "buy"]
+            if breaches:
+                parts.append(f"인사이더=대규모매도({len(breaches)}건breach)")
+            elif sells:
+                parts.append(f"인사이더=매도({len(sells)}건)")
+            elif buys:
+                parts.append(f"인사이더=매수({len(buys)}건)")
+            else:
+                parts.append("인사이더=해당없음")
+        except (OSError, ValueError):
+            parts.append("인사이더=데이터없음")
+
+        # Short interest flag
+        short_path = m7_dir / tk / "short_latest.json"
+        try:
+            sh = json.loads(short_path.read_text(encoding="utf-8"))
+            ratio = sh.get("short_ratio")
+            freshness = sh.get("freshness", "")
+            if ratio is not None and freshness == "fresh":
+                # label high short interest (>40%) as notable
+                if float(ratio) >= 40.0:
+                    parts.append(f"공매도=높음({ratio:.1f}%)")
+                else:
+                    parts.append(f"공매도={ratio:.1f}%")
+            else:
+                parts.append("공매도=데이터없음")
+        except (OSError, ValueError):
+            parts.append("공매도=데이터없음")
+
+        # US report mention (first 200 chars of first paragraph mentioning ticker)
+        mention = ""
+        if report_text and tk in report_text:
+            # Find the sentence(s) mentioning the ticker
+            for para in report_text.split("\n"):
+                if tk in para and not para.startswith("|") and not para.startswith("#"):
+                    mention = para.strip()[:200]
+                    break
+        if mention:
+            parts.append(f"리포트발췌={mention}")
+        else:
+            parts.append("리포트발췌=없음")
+
+        lines.append(" | ".join(parts))
+
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# M7 story prompts
+# ---------------------------------------------------------------------------
+
+# Note: {{ }} doubles for literal braces in ChatPromptTemplate
+M7_SYSTEM_PROMPT = """당신은 한국 일반 대중 독자를 위한 시장 이야기꾼입니다. 어려운 금융 용어는 비유로 풀고, 친근하지만 신뢰감 있는 톤으로 씁니다.
+
+**절대 금지**:
+① 투자 권유·단정 표현 — "사라", "팔아라", "매수", "매도", "목표가", "추천", "사세요", "파세요" 등 일절 사용 금지
+② 구체적 숫자(%, 가격, 금액) 출력 금지 — 주가 움직임은 '큰 폭 하락', '소폭 상승', '보합' 같은 정성적 표현만 사용
+③ 소스에 없는 이벤트·실적·제품·인과 날조 절대 금지 — 제공된 소스에 명시된 사실만 사용
+④ 과잉 인과 — 단정 대신 "~로 보입니다", "~와 맞물려" 등 관찰 표현 사용
+⑤ 변화 미미하거나 소스 빈약하면 "오늘은 특별한 움직임이 관찰되지 않았습니다"로 정직하게 표기
+
+모든 내용은 정보·교육·참고용입니다.
+
+**출력 형식**: 유효한 JSON 배열 하나만 출력 (코드 펜스·인사말·설명 텍스트 없이). 모든 텍스트 한국어.
+
+**스키마** (배열, 7개 항목):
+[
+  {{"ticker": "AAPL", "story": "2~3문장 팩트 스토리 — 어떤 일이 있었고 주가가 어떻게 움직였는지. 숫자 없이 정성적으로만."}}
+]
+
+각 종목당 2~3문장. ticker는 아래 7종 중 하나만 사용. story는 절대 비워두지 말 것."""
+
+M7_HUMAN_TEMPLATE = """오늘은 {report_date} 기준입니다. 아래 소스 안의 사실만 사용하세요.
+
+[소스 — M7 종목별 팩트 컨텍스트]
+(형식: [TICKER] 가격움직임 | 인사이더 | 공매도비율 | 리포트발췌)
+{m7_context}
+
+위 스키마대로 7개 항목의 유효한 JSON 배열 하나만 출력하세요."""
+
+
+# ---------------------------------------------------------------------------
+# M7 validation
+# ---------------------------------------------------------------------------
+
+def _validate_m7_stories(stories) -> list[str]:
+    """Validate M7 stories list. Returns list of errors (empty = valid)."""
+    errors = []
+    if not isinstance(stories, list):
+        errors.append("m7_stories is not a list")
+        return errors
+
+    seen_tickers = set()
+    for i, item in enumerate(stories):
+        if not isinstance(item, dict):
+            errors.append(f"m7_stories[{i}] is not a dict")
+            continue
+        tk = item.get("ticker")
+        if tk not in _M7_TICKERS:
+            errors.append(f"m7_stories[{i}].ticker '{tk}' not in M7 whitelist")
+        if tk in seen_tickers:
+            errors.append(f"m7_stories[{i}].ticker '{tk}' duplicate")
+        seen_tickers.add(tk)
+        story = item.get("story")
+        if not isinstance(story, str) or not story.strip():
+            errors.append(f"m7_stories[{i}].story is empty")
+
+    # All 7 tickers should be present
+    missing = [t for t in _M7_TICKERS if t not in seen_tickers]
+    if missing:
+        errors.append(f"m7_stories missing tickers: {missing}")
+
+    return errors
+
+
+# ---------------------------------------------------------------------------
+# M7 story builder (main callable)
+# ---------------------------------------------------------------------------
+
+def _build_m7_stories(notes_root: Path, run_date: str, llm):
+    """Build M7 per-ticker stories via a separate LLM call.
+
+    Returns (stories_list, status_str) where:
+      - stories_list: list of {ticker, story} dicts (or None on failure)
+      - status_str: "ok" | "skipped"
+
+    Failures (LLM error, validation fail after 2 attempts) → (None, "skipped").
+    Never raises — all exceptions caught internally.
+    """
+    try:
+        from langchain_core.prompts import ChatPromptTemplate
+        m7_prompt = ChatPromptTemplate.from_messages([
+            ("system", M7_SYSTEM_PROMPT),
+            ("human", M7_HUMAN_TEMPLATE),
+        ])
+        m7_chain = m7_prompt | llm.bind(max_tokens=1500, temperature=0.4)
+    except Exception as e:
+        log(f"[m7] prompt/chain build failed ({e}) — skip")
+        return None, "skipped"
+
+    m7_context = _build_m7_context(notes_root, run_date)
+
+    for attempt in range(1, 3):
+        signal.signal(signal.SIGALRM, _alarm_handler)
+        signal.alarm(LLM_WALL_CLOCK_SECONDS)
+        raw_text = ""
+        try:
+            resp = m7_chain.invoke({
+                "report_date": run_date,
+                "m7_context": m7_context,
+            })
+            raw_text = (resp.content or "").strip()
+        except _WallClockTimeout:
+            log(f"[m7] LLM call exceeded {LLM_WALL_CLOCK_SECONDS}s (attempt {attempt}) — skip")
+            return None, "skipped"
+        except Exception as e:
+            log(f"[m7] LLM call failed ({e}) (attempt {attempt}) — skip")
+            return None, "skipped"
+        finally:
+            signal.alarm(0)
+
+        if not raw_text:
+            log(f"[m7] LLM returned empty text (attempt {attempt}) — skip")
+            return None, "skipped"
+
+        # Strip code fences
+        stripped = re.sub(r"^```(?:json)?\s*", "", raw_text, flags=re.IGNORECASE)
+        stripped = re.sub(r"\s*```$", "", stripped).strip()
+
+        try:
+            stories = json.loads(stripped)
+        except (ValueError, json.JSONDecodeError) as e:
+            log(f"[m7] JSON parse failed ({e}) (attempt {attempt})")
+            if attempt < 2:
+                log("[m7] retrying LLM call...")
+                continue
+            log("[m7] giving up after 2 attempts — skip")
+            return None, "skipped"
+
+        # Schema validation
+        val_errors = _validate_m7_stories(stories)
+        if val_errors:
+            log(f"[m7] schema validation failed (attempt {attempt}): {val_errors}")
+            if attempt < 2:
+                log("[m7] retrying LLM call...")
+                continue
+            log("[m7] giving up after 2 attempts — skip")
+            return None, "skipped"
+
+        # Forbidden word scan on each story
+        fw_violations = []
+        for item in stories:
+            m = _FORBIDDEN_RE.search(item.get("story", ""))
+            if m:
+                fw_violations.append(f"{item.get('ticker')}: found '{m.group()}'")
+        if fw_violations:
+            log(f"[m7] forbidden word violation (attempt {attempt}): {fw_violations}")
+            if attempt < 2:
+                log("[m7] retrying LLM call...")
+                continue
+            log("[m7] giving up after 2 attempts — skip")
+            return None, "skipped"
+
+        log(f"[m7] stories validated OK (attempt {attempt}), {len(stories)} tickers")
+        return stories, "ok"
+
+    return None, "skipped"
+
+
+# ---------------------------------------------------------------------------
 # Output writer
 # ---------------------------------------------------------------------------
 
 def _write_output(notes_root: Path, run_date: str, data_as_of: str,
-                  status: str, narrative) -> None:
-    """Write narrative.json (always, even on skip/failure)."""
+                  status: str, narrative,
+                  m7_status: str = "skipped", m7_stories=None) -> None:
+    """Write narrative.json (always, even on skip/failure).
+
+    m7_status: "ok" | "skipped"
+    m7_stories: list of {ticker, story} or None
+    """
     out_dir = notes_root / "raw" / "stockdog" / "narrative"
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / "narrative.json"
@@ -308,13 +598,15 @@ def _write_output(notes_root: Path, run_date: str, data_as_of: str,
         "data_as_of": data_as_of,
         "status": status,
         "narrative": narrative,
+        "m7_status": m7_status,
+        "m7_stories": m7_stories if m7_status == "ok" else None,
     }
     try:
         out_path.write_text(
             json.dumps(payload, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
-        log(f"wrote {out_path} (status={status})")
+        log(f"wrote {out_path} (status={status}, m7_status={m7_status})")
     except OSError as e:
         log(f"failed to write output ({e})")
 
@@ -586,7 +878,16 @@ def main() -> int:
 
         # ── All checks passed ───────────────────────────────────────────────
         log(f"narrative validated OK (attempt {attempt})")
-        _write_output(notes_root, run_date, data_as_of, "ok", narrative_obj)
+
+        # ── M7 stories (P2 — independent LLM call, P1 preserved on failure) ─
+        log("starting M7 stories generation (P2)...")
+        m7_stories, m7_status = _build_m7_stories(notes_root, run_date, llm)
+
+        _write_output(
+            notes_root, run_date, data_as_of,
+            "ok", narrative_obj,
+            m7_status=m7_status, m7_stories=m7_stories,
+        )
         return 0
 
     # Should not reach here, but guard
