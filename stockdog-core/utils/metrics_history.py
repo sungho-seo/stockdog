@@ -264,7 +264,9 @@ def stage_macro_snapshot(snapshot_path: str, db_path=DB_PATH) -> str | None:
        "inflation": {cpi: {latest:{date,level,yoy}, history:[{date,yoy}...]},
                      core_cpi: {...}, ppi: {...},
                      pce: {...},        ← IMPR-068: Core PCE YoY
-                     unrate: {...}}}    ← IMPR-068: unemployment rate (level, no YoY)
+                     unrate: {latest:{date,level,yoy}, history:[{date,yoy}...],
+                              level_history:[{date,level}...]}}}
+                               ← IMPR-069: unemployment rate level history for charting
 
     YoY is computed by calendar-month match (M3). Atomic write (tmp + os.replace),
     ensure_ascii=False. Never raises (caller wraps too).
@@ -297,6 +299,19 @@ def stage_macro_snapshot(snapshot_path: str, db_path=DB_PATH) -> str | None:
                     (series,)
                 ).fetchall()
                 inflation[series] = _compute_inflation([(r[0], r[1]) for r in mrows])
+
+            # IMPR-069: unrate level_history — monthly level time-series for charting.
+            # _compute_inflation only emits history[].yoy (CPI/PPI/PCE pattern); unrate
+            # must be charted as a level, not YoY. We add level_history: [{date, level}]
+            # covering ALL available months so the dashboard chart gets ≥24 data points.
+            unrate_lrows = conn.execute(
+                "SELECT obs_date, level FROM macro_monthly WHERE series='unrate' ORDER BY obs_date ASC"
+            ).fetchall()
+            inflation["unrate"]["level_history"] = [
+                {"date": r[0], "level": r[1]}
+                for r in unrate_lrows
+                if r[1] is not None
+            ]
 
         payload = {
             "updated": date.today().isoformat(),
