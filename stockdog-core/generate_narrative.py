@@ -24,6 +24,7 @@ Usage:
     <date>        run date as YYYY-MM-DD
 """
 
+import argparse
 import json
 import os
 import re
@@ -444,23 +445,41 @@ HUMAN_TEMPLATE = """오늘은 {report_date} 기준입니다. 아래 소스 안�
 # ---------------------------------------------------------------------------
 
 def main() -> int:
-    if len(sys.argv) != 3:
-        log("usage: generate_narrative.py <notes_root> <date> — skip")
+    parser = argparse.ArgumentParser(
+        description="Gated daily narrative generator.",
+        add_help=False,
+    )
+    parser.add_argument("notes_root", nargs="?", default=None,
+                        help="Path to vault root (container: /notes)")
+    parser.add_argument("date", nargs="?", default=None,
+                        help="Run date as YYYY-MM-DD")
+    parser.add_argument("--force", action="store_true", default=False,
+                        help="Bypass idempotency gate (Gate 2) only — "
+                             "US report gate (Gate 1) is never bypassed")
+    args, _ = parser.parse_known_args()
+
+    if not args.notes_root or not args.date:
+        log("usage: generate_narrative.py <notes_root> <date> [--force] — skip")
         return 0
 
-    notes_root = Path(sys.argv[1]).expanduser()
-    run_date = sys.argv[2]
+    notes_root = Path(args.notes_root).expanduser()
+    run_date = args.date
+    force = args.force
     data_as_of = run_date  # will be updated once report is read
 
     # ── GATE 1: US report exists? (NO LLM import before this) ──────────────
+    # --force does NOT bypass this gate: no report → $0, always skipped.
     report_path = _check_report_exists(notes_root, run_date)
     if report_path is None:
         _write_output(notes_root, run_date, data_as_of, "skipped", None)
         return 0
 
     # ── GATE 2: idempotent — already have status:ok for today? ─────────────
-    if _check_idempotent(notes_root, run_date):
+    # --force bypasses this gate only.
+    if not force and _check_idempotent(notes_root, run_date):
         return 0  # no write needed; existing file is already correct
+    if force:
+        log("--force: skipping idempotency gate (Gate 2)")
 
     # ── Source excerpts (all fallback to placeholder on failure) ───────────
     daily_market, data_as_of = _extract_report_sections(report_path, run_date)
