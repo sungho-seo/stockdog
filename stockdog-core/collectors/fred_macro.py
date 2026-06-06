@@ -32,6 +32,7 @@ DAILY_SERIES = {
     "fed_funds": "DFF",           # Effective federal funds rate (daily)
     "dxy_broad": "DTWEXBGS",      # Nominal Broad U.S. Dollar Index (NOT ICE DXY)
     "hy_spread": "BAMLH0A0HYM2",  # ICE BofA US High Yield OAS (%, daily)
+    "vix":       "VIXCLS",        # IMPR-070: CBOE Volatility Index (daily, FRED)
 }
 
 # IMPR-068: weekly high-frequency series stored sparse in market_metrics daily table.

@@ -1,13 +1,15 @@
-"""IMPR-061 / IMPR-068: backfill macro history into metrics_history.db (container-side).
+"""IMPR-061 / IMPR-068 / IMPR-070: backfill macro history into metrics_history.db (container-side).
 
 Idempotent / re-runnable: every write is a column-scoped UPSERT keyed by date
 (daily) or (series, obs_date) (monthly), so re-running converges to the same
 state — it never duplicates and never clobbers other columns (M1-safe).
 
 Sources:
-  - FRED daily series (yields / spread / fed funds / broad dollar / HY spread): last 120 days
+  - FRED daily series (yields / spread / fed funds / broad dollar / HY spread / VIX):
+      IMPR-070: last ~550 days (~1.5yr trading days) — was 120 days
   - FRED weekly series (ICSA jobless claims): last 2 years (~104 weekly points)
-  - FRED monthly series (CPI / Core CPI / PPI / Core PCE / UNRATE): last 24 months
+  - FRED monthly series (CPI / Core CPI / PPI / Core PCE / UNRATE):
+      IMPR-070: last ~36 months (~1100 days) — was 24 months (~740 days)
   - USD/KRW via yfinance KRW=X: last 6 months
 
 Usage (inside the stockdog container):
@@ -37,7 +39,9 @@ def _span(pairs):
 
 
 def backfill_daily(conn, today):
-    start = (today - timedelta(days=120)).isoformat()
+    # IMPR-070: extended from 120 days to 550 days (~1.5 trading years) for period-toggle.
+    # This also backfills vix (VIXCLS) added to DAILY_SERIES in IMPR-070.
+    start = (today - timedelta(days=550)).isoformat()
     print(f"[backfill] daily series since {start}")
     for col, series_id in DAILY_SERIES.items():
         pairs = fetch_history(series_id, start)
@@ -65,9 +69,10 @@ def backfill_weekly(conn, today):
 
 
 def backfill_monthly(conn, today):
-    # ~24 months back; use 740 days to comfortably cover 24 monthly observations.
-    # IMPR-068: pce (Core PCE) and unrate added alongside CPI/core_cpi/PPI.
-    start = (today - timedelta(days=740)).isoformat()
+    # IMPR-070: extended from ~24 months (740 days) to ~36 months (1100 days).
+    # Deeper monthly history ensures YoY computation covers the full range
+    # and the dashboard can show 3-year inflation/unemployment charts.
+    start = (today - timedelta(days=1100)).isoformat()
     print(f"[backfill] monthly series since {start}")
     for series, series_id in MONTHLY_SERIES.items():
         pairs = fetch_history(series_id, start)

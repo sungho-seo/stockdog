@@ -25,6 +25,12 @@ _MACRO_COLUMNS = [
     "us_2y", "us_30y", "t10y2y", "fed_funds", "dxy_broad", "usd_krw", "macro_10y",
     "hy_spread",  # IMPR-068: ICE BofA US HY OAS (daily)
     "jobless",    # IMPR-068: Initial Jobless Claims (weekly, stored sparse)
+    # IMPR-070: VIX sourced from FRED VIXCLS (daily). Replaces yfinance-sourced
+    # vix column on market_metrics for the macro daily series. Note: the existing
+    # `vix` column (populated by save_indicators from yfinance ^VIX) is reused —
+    # save_macro now also writes vix via FRED VIXCLS to the same column on backfill
+    # and daily runs, so the column is shared (last writer wins; FRED data is
+    # authoritative for historical depth).
 ]
 
 
@@ -111,8 +117,10 @@ def save_macro(macro_latest: dict, usd_krw, db_path=DB_PATH) -> None:
             # Daily/weekly macro columns onto today's row — only those we actually have.
             # IMPR-068: hy_spread added to daily; jobless (weekly) stored sparse on
             # its FRED observation date (not today) so the chart shows the right week.
+            # IMPR-070: vix (FRED VIXCLS) added — same column as save_indicators' vix,
+            # column-scoped UPDATE so they never clobber each other.
             daily_cols = ["us_2y", "macro_10y", "us_30y", "t10y2y", "fed_funds", "dxy_broad",
-                          "hy_spread"]
+                          "hy_spread", "vix"]
             for col in daily_cols:
                 entry = macro_latest.get(col)
                 if entry and entry.get("value") is not None:
@@ -260,7 +268,8 @@ def stage_macro_snapshot(snapshot_path: str, db_path=DB_PATH) -> str | None:
 
       {"updated": <today>, "order": "oldest->newest",
        "daily": [{date, us_2y, macro_10y, us_30y, t10y2y, fed_funds, dxy_broad,
-                  usd_krw, hy_spread, jobless} ... last 90, oldest->newest],
+                  usd_krw, hy_spread, jobless, vix} ... last 400, oldest->newest],
+       -- IMPR-070: LIMIT raised 90→400 (~1.5yr trading days) for period-toggle
        "inflation": {cpi: {latest:{date,level,yoy}, history:[{date,yoy}...]},
                      core_cpi: {...}, ppi: {...},
                      pce: {...},        ← IMPR-068: Core PCE YoY
@@ -274,16 +283,18 @@ def stage_macro_snapshot(snapshot_path: str, db_path=DB_PATH) -> str | None:
     try:
         with _conn(db_path) as conn:
             daily_rows = conn.execute(
+                # IMPR-070: LIMIT raised 90→400 (~1.5yr trading days) for period-toggle;
+                # vix added (FRED VIXCLS source via save_macro / backfill_macro).
                 "SELECT date, us_2y, macro_10y, us_30y, t10y2y, fed_funds, dxy_broad, usd_krw,"
-                "       hy_spread, jobless "
-                "FROM market_metrics ORDER BY date DESC LIMIT 90"
+                "       hy_spread, jobless, vix "
+                "FROM market_metrics ORDER BY date DESC LIMIT 400"
             ).fetchall()
             daily_rows = sorted(daily_rows)  # oldest -> newest
             daily = [
                 {
                     "date": r[0], "us_2y": r[1], "macro_10y": r[2], "us_30y": r[3],
                     "t10y2y": r[4], "fed_funds": r[5], "dxy_broad": r[6], "usd_krw": r[7],
-                    "hy_spread": r[8], "jobless": r[9],
+                    "hy_spread": r[8], "jobless": r[9], "vix": r[10],
                 }
                 for r in daily_rows
             ]
