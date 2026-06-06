@@ -19,8 +19,13 @@ COLORS = {'fg': '#FFD54F', 'vix': '#EF5350', 'y10': '#42A5F5'}
 
 
 # IMPR-061: macro columns added to market_metrics via guarded migration.
-# (Inflation does NOT live here — it goes in macro_monthly, keyed by obs_date.)
-_MACRO_COLUMNS = ["us_2y", "us_30y", "t10y2y", "fed_funds", "dxy_broad", "usd_krw", "macro_10y"]
+# IMPR-068: hy_spread (daily) and jobless (weekly, sparse) added.
+# (Monthly series — CPI/PPI/PCE/UNRATE — do NOT live here; they go in macro_monthly.)
+_MACRO_COLUMNS = [
+    "us_2y", "us_30y", "t10y2y", "fed_funds", "dxy_broad", "usd_krw", "macro_10y",
+    "hy_spread",  # IMPR-068: ICE BofA US HY OAS (daily)
+    "jobless",    # IMPR-068: Initial Jobless Claims (weekly, stored sparse)
+]
 
 
 def _migrate_market_metrics(conn) -> None:
@@ -103,8 +108,11 @@ def save_macro(macro_latest: dict, usd_krw, db_path=DB_PATH) -> None:
         with _conn(db_path) as conn:
             conn.execute("INSERT OR IGNORE INTO market_metrics (date) VALUES (?)", (today,))
 
-            # Daily macro columns onto today's row — only those we actually have.
-            daily_cols = ["us_2y", "macro_10y", "us_30y", "t10y2y", "fed_funds", "dxy_broad"]
+            # Daily/weekly macro columns onto today's row — only those we actually have.
+            # IMPR-068: hy_spread added to daily; jobless (weekly) stored sparse on
+            # its FRED observation date (not today) so the chart shows the right week.
+            daily_cols = ["us_2y", "macro_10y", "us_30y", "t10y2y", "fed_funds", "dxy_broad",
+                          "hy_spread"]
             for col in daily_cols:
                 entry = macro_latest.get(col)
                 if entry and entry.get("value") is not None:
@@ -117,9 +125,20 @@ def save_macro(macro_latest: dict, usd_krw, db_path=DB_PATH) -> None:
                     "UPDATE market_metrics SET usd_krw=? WHERE date=?",
                     (usd_krw, today)
                 )
+            # jobless (ICSA): file on the FRED observation date (latest Thursday),
+            # not today — this keeps chart dates aligned to the actual release week.
+            entry = macro_latest.get("jobless")
+            if entry and entry.get("value") is not None and entry.get("date"):
+                obs_d = entry["date"]
+                conn.execute("INSERT OR IGNORE INTO market_metrics (date) VALUES (?)", (obs_d,))
+                conn.execute(
+                    "UPDATE market_metrics SET jobless=? WHERE date=?",
+                    (entry["value"], obs_d)
+                )
 
-            # Monthly inflation series → macro_monthly, keyed by observation date.
-            for series in ("cpi", "core_cpi", "ppi"):
+            # Monthly series → macro_monthly, keyed by observation date.
+            # IMPR-068: pce (Core PCE, YoY-computed same as CPI) and unrate added.
+            for series in ("cpi", "core_cpi", "ppi", "pce", "unrate"):
                 entry = macro_latest.get(series)
                 if entry and entry.get("value") is not None and entry.get("date"):
                     conn.execute(
@@ -241,9 +260,11 @@ def stage_macro_snapshot(snapshot_path: str, db_path=DB_PATH) -> str | None:
 
       {"updated": <today>, "order": "oldest->newest",
        "daily": [{date, us_2y, macro_10y, us_30y, t10y2y, fed_funds, dxy_broad,
-                  usd_krw} ... last 90, oldest->newest],
+                  usd_krw, hy_spread, jobless} ... last 90, oldest->newest],
        "inflation": {cpi: {latest:{date,level,yoy}, history:[{date,yoy}...]},
-                     core_cpi: {...}, ppi: {...}}}
+                     core_cpi: {...}, ppi: {...},
+                     pce: {...},        ← IMPR-068: Core PCE YoY
+                     unrate: {...}}}    ← IMPR-068: unemployment rate (level, no YoY)
 
     YoY is computed by calendar-month match (M3). Atomic write (tmp + os.replace),
     ensure_ascii=False. Never raises (caller wraps too).
@@ -251,7 +272,8 @@ def stage_macro_snapshot(snapshot_path: str, db_path=DB_PATH) -> str | None:
     try:
         with _conn(db_path) as conn:
             daily_rows = conn.execute(
-                "SELECT date, us_2y, macro_10y, us_30y, t10y2y, fed_funds, dxy_broad, usd_krw "
+                "SELECT date, us_2y, macro_10y, us_30y, t10y2y, fed_funds, dxy_broad, usd_krw,"
+                "       hy_spread, jobless "
                 "FROM market_metrics ORDER BY date DESC LIMIT 90"
             ).fetchall()
             daily_rows = sorted(daily_rows)  # oldest -> newest
@@ -259,12 +281,17 @@ def stage_macro_snapshot(snapshot_path: str, db_path=DB_PATH) -> str | None:
                 {
                     "date": r[0], "us_2y": r[1], "macro_10y": r[2], "us_30y": r[3],
                     "t10y2y": r[4], "fed_funds": r[5], "dxy_broad": r[6], "usd_krw": r[7],
+                    "hy_spread": r[8], "jobless": r[9],
                 }
                 for r in daily_rows
             ]
 
             inflation = {}
-            for series in ("cpi", "core_cpi", "ppi"):
+            # CPI/core_cpi/PPI/PCE: YoY computed via _compute_inflation (calendar-month match).
+            # UNRATE: level stored in macro_monthly but rendered as level (no YoY), so we
+            #   pass it through _compute_inflation too — the "yoy" field will be present but
+            #   the renderer can choose to display "level" instead. We store level as-is.
+            for series in ("cpi", "core_cpi", "ppi", "pce", "unrate"):
                 mrows = conn.execute(
                     "SELECT obs_date, level FROM macro_monthly WHERE series=? ORDER BY obs_date ASC",
                     (series,)

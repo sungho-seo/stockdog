@@ -1,4 +1,4 @@
-"""FRED macro series collector (IMPR-061).
+"""FRED macro series collector (IMPR-061 / IMPR-068).
 
 Stdlib + requests only. Reuses economic_calendar's `_fred()` shape
 (os.getenv("FRED_API_KEY"), file_type=json, raise_for_status, timeout=10).
@@ -9,8 +9,9 @@ per-series `continue` at :94-96). The US pipeline wraps the whole macro step
 in its own try/except as a second layer of defense.
 
 Series groups:
-  DAILY   — yields / spread / policy rate / broad dollar (FRED daily cadence)
-  MONTHLY — inflation indices (CPI / Core CPI / PPI), released ~monthly
+  DAILY   — yields / spread / policy rate / broad dollar / HY spread (FRED daily cadence)
+  WEEKLY  — jobless claims (ICSA, weekly Thursday; stored sparse in market_metrics daily table)
+  MONTHLY — inflation indices (CPI / Core CPI / PPI / Core PCE), unemployment rate
 """
 
 import os
@@ -24,22 +25,31 @@ FRED_BASE = "https://api.stlouisfed.org/fred"
 
 # key -> FRED series_id. Keys are the column / snapshot names used downstream.
 DAILY_SERIES = {
-    "us_2y":     "DGS2",      # 2-Year Treasury constant maturity
-    "macro_10y": "DGS10",     # 10-Year Treasury constant maturity
-    "us_30y":    "DGS30",     # 30-Year Treasury constant maturity
-    "t10y2y":    "T10Y2Y",    # 10Y minus 2Y spread (FRED computes it)
-    "fed_funds": "DFF",       # Effective federal funds rate (daily)
-    "dxy_broad": "DTWEXBGS",  # Nominal Broad U.S. Dollar Index (NOT ICE DXY)
+    "us_2y":     "DGS2",          # 2-Year Treasury constant maturity
+    "macro_10y": "DGS10",         # 10-Year Treasury constant maturity
+    "us_30y":    "DGS30",         # 30-Year Treasury constant maturity
+    "t10y2y":    "T10Y2Y",        # 10Y minus 2Y spread (FRED computes it)
+    "fed_funds": "DFF",           # Effective federal funds rate (daily)
+    "dxy_broad": "DTWEXBGS",      # Nominal Broad U.S. Dollar Index (NOT ICE DXY)
+    "hy_spread": "BAMLH0A0HYM2",  # ICE BofA US High Yield OAS (%, daily)
+}
+
+# IMPR-068: weekly high-frequency series stored sparse in market_metrics daily table.
+# ICSA is released every Thursday; most daily rows will be NULL for this column.
+WEEKLY_SERIES = {
+    "jobless": "ICSA",  # Initial Jobless Claims (SA, weekly)
 }
 
 MONTHLY_SERIES = {
     "cpi":      "CPIAUCSL",   # CPI, all items
     "core_cpi": "CPILFESL",   # CPI less food & energy
     "ppi":      "PPIACO",     # PPI, all commodities
+    "pce":      "PCEPILFE",   # Core PCE Price Index — YoY computed same as CPI/PPI
+    "unrate":   "UNRATE",     # Civilian Unemployment Rate (%)
 }
 
 # Combined map for callers that want everything by key.
-ALL_SERIES = {**DAILY_SERIES, **MONTHLY_SERIES}
+ALL_SERIES = {**DAILY_SERIES, **WEEKLY_SERIES, **MONTHLY_SERIES}
 
 
 def _fred(endpoint, params):
