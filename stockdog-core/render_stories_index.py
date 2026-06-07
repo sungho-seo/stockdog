@@ -74,11 +74,23 @@ def main():
     # Cards for each narrative
     for narrative in narratives:
         report_date = narrative.get("report_date", "Unknown")
-        hero = narrative.get("narrative", {}).get("hero_oneliner", "")
-        keywords = narrative.get("narrative", {}).get("market_narrative", {}).get("keywords", [])
+        content_type = narrative.get("content_type", "daily")
+
+        # Extract hero and keywords based on content type
+        if content_type == "weekly":
+            hero = narrative.get("hero_oneliner", "")
+            keywords = narrative.get("weekly_narrative", {}).get("keywords", [])
+            date_label = f"이번 주 총정리 ({report_date})"
+        else:
+            # daily (default)
+            hero = narrative.get("narrative", {}).get("hero_oneliner", "")
+            keywords = narrative.get("narrative", {}).get("market_narrative", {}).get("keywords", [])
+            date_label = report_date
 
         # Date + hero_oneliner as header with link to detail page
-        lines.append(f"## [{report_date}](/daily-stories/{report_date})")
+        badge = "주간" if content_type == "weekly" else ""
+        badge_str = f" **{badge}**" if badge else ""
+        lines.append(f"## [{date_label}](/daily-stories/{report_date}){badge_str}")
         lines.append("")
 
         if hero:

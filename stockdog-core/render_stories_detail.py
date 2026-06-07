@@ -32,7 +32,7 @@ def load_json(path: Path):
 
 
 def render_detail_page(vault_root: Path, narrative: dict) -> bool:
-    """Write a single detail page for one narrative.
+    """Write a single detail page for one narrative (daily or weekly).
 
     Returns True if successful, False otherwise.
     """
@@ -42,6 +42,20 @@ def render_detail_page(vault_root: Path, narrative: dict) -> bool:
 
     if narrative.get("status") != "ok":
         return False
+
+    content_type = narrative.get("content_type", "daily")
+
+    # Branch based on content type
+    if content_type == "weekly":
+        return render_weekly_detail_page(vault_root, narrative)
+    else:
+        # daily (default)
+        return render_daily_detail_page(vault_root, narrative)
+
+
+def render_daily_detail_page(vault_root: Path, narrative: dict) -> bool:
+    """Write a single detail page for a daily narrative."""
+    report_date = narrative.get("report_date")
 
     nv = narrative.get("narrative", {})
     hero = nv.get("hero_oneliner", "")
@@ -58,7 +72,7 @@ def render_detail_page(vault_root: Path, narrative: dict) -> bool:
     m7_status = narrative.get("m7_status")
     m7_stories = narrative.get("m7_stories", []) if m7_status == "ok" else []
 
-    # Build markdown
+    # Build markdown for daily narrative
     lines = []
     lines.append("---")
     lines.append(f'title: "시장 이야기 — {report_date}"')
@@ -158,16 +172,7 @@ def render_detail_page(vault_root: Path, narrative: dict) -> bool:
         lines.append("")
 
     # Footer disclaimer
-    lines.append("---")
-    lines.append("")
-    lines.append("## 주의")
-    lines.append("")
-    lines.append(
-        "이 페이지의 내용은 시장 관찰을 바탕으로 한 정성적 해석입니다. "
-        "투자 판단의 근거가 될 수 없으며, "
-        "모든 투자 결정은 개별 투자자의 책임입니다."
-    )
-    lines.append("")
+    add_footer_disclaimer(lines)
 
     # Write output
     out_dir = vault_root / "10_Public" / "daily-stories"
@@ -178,6 +183,127 @@ def render_detail_page(vault_root: Path, narrative: dict) -> bool:
         fh.write("\n".join(lines))
 
     return True
+
+
+def render_weekly_detail_page(vault_root: Path, narrative: dict) -> bool:
+    """Write a single detail page for a weekly narrative."""
+    report_date = narrative.get("report_date")
+
+    hero = narrative.get("hero_oneliner", "")
+    weekly_narrative = narrative.get("weekly_narrative", {})
+    weekly_story = weekly_narrative.get("story", "")
+    weekly_keywords = weekly_narrative.get("keywords", [])
+
+    themes = narrative.get("themes", [])
+    macro_flow = narrative.get("macro_flow", {})
+    macro_story = macro_flow.get("story", "")
+    kr_impact = macro_flow.get("kr_impact", "")
+
+    m7_weekly = narrative.get("m7_weekly", [])
+
+    # Build markdown for weekly narrative
+    lines = []
+    lines.append("---")
+    lines.append(f'title: "이번 주 마켓 스토리 — {report_date}"')
+    lines.append("public: true")
+    lines.append("type: note")
+    lines.append(f"date: {report_date}")
+    lines.append("tags:")
+    lines.append("  - ctx/public")
+    lines.append("  - stockdog")
+    lines.append("  - weekly-story")
+    lines.append("---")
+    lines.append("")
+
+    # H1 with week label + hero oneliner
+    lines.append(f"# 이번 주 마켓 스토리 — {report_date}")
+    lines.append("")
+    if hero:
+        lines.append(f"*{hero}*")
+        lines.append("")
+
+    # Weekly narrative section
+    if weekly_story:
+        lines.append("---")
+        lines.append("")
+        lines.append("## 이번 주 흐름")
+        lines.append("")
+        lines.append(weekly_story)
+        lines.append("")
+        if weekly_keywords:
+            keyword_str = " · ".join(weekly_keywords)
+            lines.append(f"**주제**: {keyword_str}")
+            lines.append("")
+        lines.append("")
+
+    # Themes section
+    if themes:
+        lines.append("## 주요 테마")
+        lines.append("")
+        for theme in themes:
+            title = theme.get("title", "")
+            story = theme.get("story", "")
+            if title:
+                lines.append(f"### {title}")
+                lines.append("")
+                if story:
+                    lines.append(story)
+                    lines.append("")
+        lines.append("")
+
+    # Macro section
+    if macro_story:
+        lines.append("## 매크로")
+        lines.append("")
+        lines.append(macro_story)
+        lines.append("")
+        if kr_impact:
+            lines.append("🇰🇷 **한국 시장 영향**")
+            lines.append("")
+            lines.append(kr_impact)
+            lines.append("")
+        lines.append("")
+
+    # M7 weekly section
+    if m7_weekly:
+        lines.append("## M7 주간")
+        lines.append("")
+        for m7 in m7_weekly:
+            ticker = m7.get("ticker", "")
+            story = m7.get("story", "")
+            if ticker and story:
+                lines.append(f"### {ticker}")
+                lines.append("")
+                lines.append(story)
+                lines.append("")
+        lines.append("")
+
+    # Footer disclaimer
+    add_footer_disclaimer(lines)
+
+    # Write output
+    out_dir = vault_root / "10_Public" / "daily-stories"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_file = out_dir / f"{report_date}.md"
+
+    with out_file.open("w", encoding="utf-8") as fh:
+        fh.write("\n".join(lines))
+
+    return True
+
+
+def add_footer_disclaimer(lines: list):
+    """Add footer disclaimer to the markdown lines."""
+    lines.append("---")
+    lines.append("")
+    lines.append("## 주의")
+    lines.append("")
+    lines.append(
+        "이 페이지의 내용은 시장 관찰을 바탕으로 한 정성적 해석입니다. "
+        "투자 판단의 근거가 될 수 없으며, "
+        "모든 투자 결정은 개별 투자자의 책임입니다."
+    )
+    lines.append("")
 
 
 def main():
