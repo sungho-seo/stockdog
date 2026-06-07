@@ -27,8 +27,10 @@ line is an observation.
 # ===========================================================================
 
 import json
+import os
 import re
 import sys
+import tempfile
 from datetime import date as _date, datetime, timedelta
 from pathlib import Path
 from statistics import mean
@@ -1099,7 +1101,13 @@ def main() -> int:
     L.append("")
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_path.write_text("\n".join(L), encoding="utf-8")
+
+    # Atomic write (temp file + os.replace) to handle root-owned files gracefully
+    # and ensure new files are written as the running user.
+    content = "\n".join(L)
+    tmp_path = out_path.with_suffix(out_path.suffix + ".tmp")
+    tmp_path.write_text(content, encoding="utf-8")
+    os.replace(tmp_path, out_path)
 
     n_major = len(major_cs) + len(major_flags)
     n_watch = min(len(watch_all), WATCH_CAP)
@@ -1111,15 +1119,17 @@ def main() -> int:
     try:
         sig_dir = vault_root / "raw" / "stockdog" / "signals"
         sig_dir.mkdir(parents=True, exist_ok=True)
-        (sig_dir / "signal_count.json").write_text(
-            json.dumps({
-                "date": run_date,
-                "major": n_major,
-                "watch": n_watch,
-                "notable": (n_major + n_watch) > 0,
-            }),
-            encoding="utf-8",
-        )
+        gate_path = sig_dir / "signal_count.json"
+        gate_content = json.dumps({
+            "date": run_date,
+            "major": n_major,
+            "watch": n_watch,
+            "notable": (n_major + n_watch) > 0,
+        })
+        # Atomic write (temp + os.replace) for consistency
+        gate_tmp = gate_path.with_suffix(gate_path.suffix + ".tmp")
+        gate_tmp.write_text(gate_content, encoding="utf-8")
+        os.replace(gate_tmp, gate_path)
     except OSError as e:
         print(f"[render_signals_tracker] gate sidecar write skipped (non-fatal): {e}", file=sys.stderr)
 
