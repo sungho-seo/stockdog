@@ -79,16 +79,18 @@ def check_report_exists(notes_root: Path, run_date: str) -> Path | None:
     return None
 
 
-def check_idempotent(notes_root: Path, run_date: str, content_type: str = "daily") -> bool:
+def check_idempotent(notes_root: Path, run_date: str, content_type: str = "daily", require_m7_ok: bool = False) -> bool:
     """Return True if we should SKIP (already have a good narrative for today).
 
     Args:
         notes_root: Path to vault root
         run_date: Date as YYYY-MM-DD
         content_type: "daily" | "weekly" — only skip if matching content_type
+        require_m7_ok: If True (daily only), also require m7_status=="ok" for skip (idempotent retry on M7 failure)
 
     Returns:
         True if narrative.json already has status=="ok" for run_date with matching content_type
+        and (for daily with require_m7_ok=True) also m7_status=="ok"
     """
     out_path = notes_root / "raw" / "stockdog" / "narrative" / "narrative.json"
     if not out_path.is_file():
@@ -97,15 +99,26 @@ def check_idempotent(notes_root: Path, run_date: str, content_type: str = "daily
         existing = json.loads(out_path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return False
-    if (
+
+    # Base condition: report_date, status, schema_version, content_type match
+    if not (
         existing.get("report_date") == run_date
         and existing.get("status") == "ok"
         and existing.get("schema_version") == SCHEMA_VERSION
         and existing.get("content_type") == content_type
     ):
-        log(f"narrative.json already ok for {run_date} (content_type={content_type}) — skip (idempotent, no LLM call)")
+        return False
+
+    # For daily with require_m7_ok=True, also check m7_status=="ok"
+    if content_type == "daily" and require_m7_ok:
+        if existing.get("m7_status") != "ok":
+            return False
+        log(f"narrative.json already ok+m7_ok for {run_date} — skip (idempotent, no LLM call)")
         return True
-    return False
+
+    # For weekly (or daily with require_m7_ok=False), skip if status==ok and content_type matches
+    log(f"narrative.json already ok for {run_date} (content_type={content_type}) — skip (idempotent, no LLM call)")
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -295,16 +308,19 @@ def extract_signals_excerpt(notes_root: Path) -> str:
 def get_llm():
     """Get LLM instance configured for narrative tasks.
 
-    Returns ChatAnthropic with claude-sonnet-4-6 model.
+    Delegates to analysis.llm_analyzer.get_llm() which returns:
+    - ChatAnthropic (claude-sonnet-4-6) if ANTHROPIC_API_KEY set
+    - ChatGoogleGenerativeAI (gemini-3-pro-preview) if GEMINI_API_KEY set
+    - None if neither API key configured
+
+    This ensures narrative generation uses the same LLM provider fallback
+    as the rest of the stockdog pipeline.
     """
     try:
-        from langchain_anthropic import ChatAnthropic
-        if not os.getenv("ANTHROPIC_API_KEY"):
-            log("no ANTHROPIC_API_KEY configured")
-            return None
-        return ChatAnthropic(model="claude-sonnet-4-6", temperature=0.2, max_tokens=8192)
+        from analysis.llm_analyzer import get_llm as shared_get_llm
+        return shared_get_llm()
     except Exception as e:
-        log(f"get_llm failed ({e})")
+        log(f"get_llm import failed ({e})")
         return None
 
 

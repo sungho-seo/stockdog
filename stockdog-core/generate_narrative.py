@@ -466,9 +466,11 @@ def main() -> int:
         write_output(notes_root, run_date, data_as_of, "skipped", None, content_type="daily")
         return 0
 
-    # ── GATE 2: idempotent — already have status:ok for today? ─────────────
+    # ── GATE 2: idempotent — already have status:ok+m7_ok for today? ─────────────
     # --force bypasses this gate only.
-    if not force and check_idempotent(notes_root, run_date, content_type="daily"):
+    # For daily, we require both status=="ok" AND m7_status=="ok" to skip.
+    # If M7 failed (m7_status!="ok"), we retry the narrative generation.
+    if not force and check_idempotent(notes_root, run_date, content_type="daily", require_m7_ok=True):
         return 0  # no write needed; existing file is already correct
     if force:
         log("--force: skipping idempotency gate (Gate 2)")

@@ -32,7 +32,7 @@ from pathlib import Path
 from narrative_common import (
     log, _WallClockTimeout, _alarm_handler,
     check_report_exists, check_idempotent,
-    extract_report_sections, extract_macro_excerpt, extract_fear_greed,
+    extract_report_sections, extract_macro_excerpt,
     get_llm, write_output, check_forbidden_words,
     set_wall_clock, cancel_wall_clock,
     _M7_TICKERS, SCHEMA_VERSION,
