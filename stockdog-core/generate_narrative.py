@@ -33,12 +33,18 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+from narrative_common import (
+    log, _WallClockTimeout, _alarm_handler,
+    check_report_exists, check_idempotent,
+    extract_report_sections, extract_macro_excerpt, extract_fear_greed,
+    extract_signals_excerpt,
+    get_llm, write_output, check_forbidden_words,
+    set_wall_clock, cancel_wall_clock,
+    _M7_TICKERS, SCHEMA_VERSION,
+)
+
 LOG = "[generate_narrative]"
 LLM_WALL_CLOCK_SECONDS = 120
-SCHEMA_VERSION = 1
-
-# M7 universe — canonical order, locked with config/m7.yaml
-_M7_TICKERS = ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "TSLA"]
 
 # Qualitative magnitude label from change_pct (None → unknown)
 def _magnitude_label(change_pct):
@@ -57,262 +63,9 @@ def _magnitude_label(change_pct):
     else:
         return "큰 폭 하락"
 
-# Sparkline chars to strip from macro text (avoid token waste / rendering noise)
-_SPARKLINE_RE = re.compile(r"[▁▂▃▄▅▆▇█]+")
-
-# Forbidden words (투자 권유·단정 표현) — regex for post-generation scan.
-#
-# bare "매수"/"매도" 는 제외: "매수세", "매도세", "순매수", "순매도", "매수 우위" 같은
-# 정상적인 시장 서술 어휘에서 false-positive 가 발생하기 때문.
-# bare "추천" 도 제외: "추천주는 없다" 등 부정문에서 오매칭.
-# 대신 명령·권유형(투자 조언) 패턴만 타깃으로 삼는다.
-_FORBIDDEN_RE = re.compile(
-    r"매수하[세시]|매도하[세시]"          # 매수하세요 / 매도하세요 / 매수하시 / 매도하시
-    r"|매수할|매도할"                     # 매수할 때 / 매도할 때 (활용형)
-    r"|매수 추천|매도 추천"               # 명시적 투자 추천
-    r"|추천합니다|추천드|강력 추천|강추"  # 추천 동사·단어 (bare 추천 아님)
-    r"|목표가|목표 주가"                  # 목표가류
-    r"|비중 확대|비중확대|비중 축소|비중축소"  # 비중 조언
-    r"|풀매수|손절|익절"                  # 포지션 조언
-    r"|사세요|파세요|담으세요|정리하세요"  # ~세요 조언형 동사
-    r"|사야|팔아야|사라|팔아라"           # 명령·당위형 (기존 패턴 유지)
-    r"|지금 사|지금 팔"                   # "지금 사/팔" (기존 패턴 유지)
-)
-
-# Whitelist of H2 sections to include from the US market report
-_REPORT_SECTION_WHITELIST = {"시장 지표", "단기 전망"}
-
-
-def log(msg: str) -> None:
-    print(f"{LOG} {msg}", flush=True)
-
-
-class _WallClockTimeout(Exception):
-    pass
-
-
-def _alarm_handler(signum, frame):
-    raise _WallClockTimeout()
-
 
 # ---------------------------------------------------------------------------
-# Gate helpers
-# ---------------------------------------------------------------------------
-
-def _check_report_exists(notes_root: Path, run_date: str) -> Path | None:
-    """Return path to Market_Report_US_<date>.md if it exists, else None."""
-    report_path = (
-        notes_root / "raw" / "stockdog" / "daily-market"
-        / run_date / f"Market_Report_US_{run_date}.md"
-    )
-    if report_path.is_file():
-        return report_path
-    log(f"US market report not found at {report_path} — skip (no LLM call)")
-    return None
-
-
-def _check_idempotent(notes_root: Path, run_date: str) -> bool:
-    """Return True if we should SKIP (already have a good P1 narrative + M7 for today)."""
-    out_path = notes_root / "raw" / "stockdog" / "narrative" / "narrative.json"
-    if not out_path.is_file():
-        return False
-    try:
-        existing = json.loads(out_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return False
-    if (
-        existing.get("report_date") == run_date
-        and existing.get("status") == "ok"
-        and existing.get("schema_version") == SCHEMA_VERSION
-        and existing.get("m7_status") == "ok"
-    ):
-        log(f"narrative.json already ok+m7_ok for {run_date} — skip (idempotent, no LLM call)")
-        return True
-    return False
-
-
-# ---------------------------------------------------------------------------
-# Source excerpt builders
-# ---------------------------------------------------------------------------
-
-def _extract_report_sections(report_path: Path, run_date: str) -> tuple[str, str]:
-    """Return (excerpt_text, data_as_of) from the US market report.
-
-    Includes: frontmatter + [!summary] callout + whitelisted H2 sections.
-    Excludes: portfolio tables, leverage ETF rows, M7 insider tables.
-    """
-    try:
-        text = report_path.read_text(encoding="utf-8")
-    except OSError as e:
-        log(f"cannot read report ({e})")
-        return "(오늘은 이 데이터가 없습니다)", run_date
-
-    # Extract data_as_of from frontmatter
-    data_as_of = run_date
-    fm_match = re.search(r"^data_as_of:\s*(.+)$", text, re.MULTILINE)
-    if fm_match:
-        data_as_of = fm_match.group(1).strip()
-
-    # Split on H2 boundaries ("## …")
-    parts = re.split(r"(?=^## )", text, flags=re.MULTILINE)
-
-    # Always include frontmatter + [!summary] block (everything before first ##)
-    preamble = parts[0] if parts else ""
-    # Trim preamble to frontmatter + summary callout only (first ~50 lines max)
-    preamble_lines = preamble.splitlines()
-    # Find [!summary] end — keep up to first blank line after it, cap at 60 lines
-    summary_end = len(preamble_lines)
-    in_summary = False
-    for i, line in enumerate(preamble_lines):
-        if "[!summary]" in line:
-            in_summary = True
-        if in_summary and i > 10 and line.strip() == "":
-            summary_end = i + 1
-            break
-    preamble = "\n".join(preamble_lines[:min(summary_end, 60)])
-
-    # Extract whitelisted sections
-    selected = [preamble.strip()]
-    for part in parts[1:]:
-        header_match = re.match(r"^## (.+)", part)
-        if not header_match:
-            continue
-        section_name = header_match.group(1).strip()
-        if section_name in _REPORT_SECTION_WHITELIST:
-            selected.append(part.strip())
-
-    excerpt = "\n\n".join(selected)
-    # Cap at ~3000 chars to stay within token budget
-    return excerpt[:3000], data_as_of
-
-
-def _extract_macro_excerpt(notes_root: Path) -> str:
-    """Return macro tracker text with sparkline chars stripped."""
-    macro_path = notes_root / "10_Public" / "trackers" / "macro.md"
-    if not macro_path.is_file():
-        return "(오늘은 이 데이터가 없습니다)"
-    try:
-        text = macro_path.read_text(encoding="utf-8")
-    except OSError:
-        return "(오늘은 이 데이터가 없습니다)"
-
-    # Strip sparkline chars
-    text = _SPARKLINE_RE.sub("", text)
-
-    # Keep only the relevant sections: 시장 컨텍스트, 금리 곡선, 인플레이션,
-    # 정책, 환율, 심리 컨텍스트 (and the leading context/실질10Y)
-    # Strategy: split on H2, keep named sections, skip frontmatter header block
-    parts = re.split(r"(?=^## )", text, flags=re.MULTILINE)
-    keep_sections = {
-        "시장 컨텍스트", "금리 곡선 (UST)", "인플레이션",
-        "정책 (Fed)", "환율 / 달러", "심리 컨텍스트 (참조)",
-    }
-    selected = []
-    for part in parts:
-        header_match = re.match(r"^## (.+)", part)
-        if header_match and header_match.group(1).strip() in keep_sections:
-            selected.append(part.strip())
-
-    result = "\n\n".join(selected) if selected else text[:2000]
-    return result[:2000]
-
-
-def _extract_fear_greed(notes_root: Path, run_date: str) -> str:
-    """Return scalar Fear & Greed object (score/rating/previous_*). No history."""
-    fg_path = (
-        notes_root / "raw" / "stockdog" / "daily-market"
-        / run_date / "media" / "fear_greed.json"
-    )
-    if not fg_path.is_file():
-        return "(오늘은 이 데이터가 없습니다)"
-    try:
-        raw = json.loads(fg_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return "(오늘은 이 데이터가 없습니다)"
-
-    fg = raw.get("fear_and_greed", {})
-    scalar = {
-        "score": round(float(fg.get("score", 0))),
-        "rating": fg.get("rating", ""),
-        "previous_close": fg.get("previous_close"),
-        "previous_1_week": fg.get("previous_1_week"),
-        "previous_1_month": fg.get("previous_1_month"),
-    }
-    return json.dumps(scalar, ensure_ascii=False, indent=2)
-
-
-def _extract_signals_excerpt(notes_root: Path) -> str:
-    """Return signals tracker excerpt: context line + 주요시그널 + 관찰 top~5 + 요약표.
-
-    Explicitly EXCLUDES the TODAY_READ block and the 방법론 section.
-    """
-    signals_path = notes_root / "10_Public" / "trackers" / "signals.md"
-    if not signals_path.is_file():
-        return "(오늘은 이 데이터가 없습니다)"
-    try:
-        text = signals_path.read_text(encoding="utf-8")
-    except OSError:
-        return "(오늘은 이 데이터가 없습니다)"
-
-    # Strip TODAY_READ block
-    text = re.sub(
-        r"<!-- TODAY_READ:START.*?-->.*?<!-- TODAY_READ:END -->",
-        "",
-        text,
-        flags=re.DOTALL,
-    )
-
-    # Split on H2
-    parts = re.split(r"(?=^## )", text, flags=re.MULTILINE)
-
-    selected = []
-
-    # Include the preamble up to first H2 (컨텍스트 한 줄 + static banner)
-    if parts:
-        preamble = parts[0].strip()
-        # Keep only up to ~20 lines (avoid frontmatter bloat)
-        preamble_lines = preamble.splitlines()
-        # Find the static context line (starts with **컨텍스트**)
-        ctx_idx = 0
-        for i, line in enumerate(preamble_lines):
-            if "컨텍스트" in line or "F&G" in line:
-                ctx_idx = i
-                break
-        # Keep from ctx line onward, max 10 lines
-        selected.append(
-            "\n".join(preamble_lines[ctx_idx: ctx_idx + 10]).strip()
-        )
-
-    keep_sections = {"🔴 주요 시그널", "📊 트래커별 요약"}
-    observe_section = None
-
-    for part in parts[1:]:
-        header_match = re.match(r"^## (.+)", part)
-        if not header_match:
-            continue
-        section_name = header_match.group(1).strip()
-
-        if section_name in keep_sections:
-            selected.append(part.strip())
-        elif section_name == "🟡 관찰":
-            observe_section = part  # truncate to top ~5 bullets below
-
-    # Truncate 관찰 section to 5 bullets
-    if observe_section:
-        lines = observe_section.splitlines()
-        bullets = [l for l in lines if l.strip().startswith("-")]
-        header_line = lines[0] if lines else "## 🟡 관찰"
-        truncated = [header_line] + bullets[:5]
-        if len(bullets) > 5:
-            truncated.append(f"- +{len(bullets) - 5}건 (요약 참조)")
-        selected.append("\n".join(truncated))
-
-    result = "\n\n".join(selected)
-    return result[:2000]
-
-
-# ---------------------------------------------------------------------------
-# M7 source builder
+# M7 source builder (local to daily narrative)
 # ---------------------------------------------------------------------------
 
 def _build_m7_context(notes_root: Path, run_date: str) -> str:
@@ -575,61 +328,11 @@ def _build_m7_stories(notes_root: Path, run_date: str, llm):
     return None, "skipped"
 
 
-# ---------------------------------------------------------------------------
-# Output writer
-# ---------------------------------------------------------------------------
-
-def _write_output(notes_root: Path, run_date: str, data_as_of: str,
-                  status: str, narrative,
-                  m7_status: str = "skipped", m7_stories=None) -> None:
-    """Write narrative.json (always, even on skip/failure).
-
-    m7_status: "ok" | "skipped"
-    m7_stories: list of {ticker, story} or None
-
-    IMPR-071: If status=="ok", also archive the full payload to
-    archive/<run_date>.json for permanent data retention.
-    """
-    out_dir = notes_root / "raw" / "stockdog" / "narrative"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / "narrative.json"
-
-    payload = {
-        "schema_version": SCHEMA_VERSION,
-        "generated_at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "report_date": run_date,
-        "data_as_of": data_as_of,
-        "status": status,
-        "narrative": narrative,
-        "m7_status": m7_status,
-        "m7_stories": m7_stories if m7_status == "ok" else None,
-    }
-    try:
-        out_path.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-        log(f"wrote {out_path} (status={status}, m7_status={m7_status})")
-
-        # IMPR-071 D0: Archive to date-stamped file only on success
-        if status == "ok":
-            archive_dir = out_dir / "archive"
-            archive_dir.mkdir(parents=True, exist_ok=True)
-            archive_path = archive_dir / f"{run_date}.json"
-            try:
-                archive_path.write_text(
-                    json.dumps(payload, ensure_ascii=False, indent=2),
-                    encoding="utf-8",
-                )
-                log(f"archived {archive_path}")
-            except OSError as e:
-                log(f"failed to archive ({e})")
-    except OSError as e:
-        log(f"failed to write output ({e})")
+# No longer needed here — use write_output from narrative_common with content_type="daily"
 
 
 # ---------------------------------------------------------------------------
-# Validation
+# Validation (daily-specific)
 # ---------------------------------------------------------------------------
 
 def _validate_narrative(obj: dict) -> list[str]:
@@ -672,26 +375,6 @@ def _validate_narrative(obj: dict) -> list[str]:
                 errors.append(f"indicator_captions[{i}].caption is empty")
 
     return errors
-
-
-def _check_forbidden(obj: dict) -> list[str]:
-    """Return list of forbidden-word violations found in any string value."""
-    violations = []
-
-    def _scan(v, path):
-        if isinstance(v, str):
-            m = _FORBIDDEN_RE.search(v)
-            if m:
-                violations.append(f"{path}: found '{m.group()}'")
-        elif isinstance(v, dict):
-            for k, sub in v.items():
-                _scan(sub, f"{path}.{k}")
-        elif isinstance(v, list):
-            for i, sub in enumerate(v):
-                _scan(sub, f"{path}[{i}]")
-
-    _scan(obj, "narrative")
-    return violations
 
 
 # ---------------------------------------------------------------------------
@@ -778,42 +461,34 @@ def main() -> int:
 
     # ── GATE 1: US report exists? (NO LLM import before this) ──────────────
     # --force does NOT bypass this gate: no report → $0, always skipped.
-    report_path = _check_report_exists(notes_root, run_date)
+    report_path = check_report_exists(notes_root, run_date)
     if report_path is None:
-        _write_output(notes_root, run_date, data_as_of, "skipped", None)
+        write_output(notes_root, run_date, data_as_of, "skipped", None, content_type="daily")
         return 0
 
     # ── GATE 2: idempotent — already have status:ok for today? ─────────────
     # --force bypasses this gate only.
-    if not force and _check_idempotent(notes_root, run_date):
+    if not force and check_idempotent(notes_root, run_date, content_type="daily"):
         return 0  # no write needed; existing file is already correct
     if force:
         log("--force: skipping idempotency gate (Gate 2)")
 
     # ── Source excerpts (all fallback to placeholder on failure) ───────────
-    daily_market, data_as_of = _extract_report_sections(report_path, run_date)
-    macro = _extract_macro_excerpt(notes_root)
-    fear_greed = _extract_fear_greed(notes_root, run_date)
-    signals = _extract_signals_excerpt(notes_root)
+    daily_market, data_as_of = extract_report_sections(report_path, run_date)
+    macro = extract_macro_excerpt(notes_root)
+    fear_greed = extract_fear_greed(notes_root, run_date)
+    signals = extract_signals_excerpt(notes_root)
 
     # ── LLM import (ONLY here — after both gates pass) ─────────────────────
-    try:
-        from analysis.llm_analyzer import get_llm
-        llm = get_llm()
-    except Exception as e:
-        log(f"get_llm import/init failed ({e}) — skip")
-        _write_output(notes_root, run_date, data_as_of, "skipped", None)
-        return 0
+    llm = get_llm()
     if llm is None:
         log("no LLM configured (no API key) — skip")
-        _write_output(notes_root, run_date, data_as_of, "skipped", None)
+        write_output(notes_root, run_date, data_as_of, "skipped", None, content_type="daily")
         return 0
 
     # get_llm() returns ChatAnthropic(temperature=0.2). We want 0.4 for this
     # narrative task. Use .bind() to override on the chain level — ChatAnthropic
     # accepts temperature as a bind param (passed through to the API call).
-    # Note: get_llm() signature has no temperature arg, so we cannot pass it
-    # there; .bind(temperature=0.4) is the correct override path.
     try:
         from langchain_core.prompts import ChatPromptTemplate
         prompt = ChatPromptTemplate.from_messages([
@@ -823,13 +498,12 @@ def main() -> int:
         chain = prompt | llm.bind(max_tokens=2000, temperature=0.4)
     except Exception as e:
         log(f"prompt/chain build failed ({e}) — skip")
-        _write_output(notes_root, run_date, data_as_of, "skipped", None)
+        write_output(notes_root, run_date, data_as_of, "skipped", None, content_type="daily")
         return 0
 
     # ── LLM call with wall-clock guard ─────────────────────────────────────
     for attempt in range(1, 3):  # max 2 attempts (1 retry on validation fail)
-        signal.signal(signal.SIGALRM, _alarm_handler)
-        signal.alarm(LLM_WALL_CLOCK_SECONDS)
+        set_wall_clock(LLM_WALL_CLOCK_SECONDS)
         raw_text = ""
         try:
             resp = chain.invoke({
@@ -842,18 +516,18 @@ def main() -> int:
             raw_text = (resp.content or "").strip()
         except _WallClockTimeout:
             log(f"LLM call exceeded {LLM_WALL_CLOCK_SECONDS}s (attempt {attempt}) — skip")
-            _write_output(notes_root, run_date, data_as_of, "skipped", None)
+            write_output(notes_root, run_date, data_as_of, "skipped", None, content_type="daily")
             return 0
         except Exception as e:
             log(f"LLM call failed ({e}) (attempt {attempt}) — skip")
-            _write_output(notes_root, run_date, data_as_of, "skipped", None)
+            write_output(notes_root, run_date, data_as_of, "skipped", None, content_type="daily")
             return 0
         finally:
-            signal.alarm(0)
+            cancel_wall_clock()
 
         if not raw_text:
             log(f"LLM returned empty text (attempt {attempt}) — skip")
-            _write_output(notes_root, run_date, data_as_of, "skipped", None)
+            write_output(notes_root, run_date, data_as_of, "skipped", None, content_type="daily")
             return 0
 
         # ── Parse JSON ─────────────────────────────────────────────────────
@@ -868,7 +542,7 @@ def main() -> int:
                 log("retrying LLM call...")
                 continue
             log("giving up after 2 attempts — skip")
-            _write_output(notes_root, run_date, data_as_of, "skipped", None)
+            write_output(notes_root, run_date, data_as_of, "skipped", None, content_type="daily")
             return 0
 
         # ── Schema validation ───────────────────────────────────────────────
@@ -879,18 +553,18 @@ def main() -> int:
                 log("retrying LLM call...")
                 continue
             log("giving up after 2 attempts — skip")
-            _write_output(notes_root, run_date, data_as_of, "skipped", None)
+            write_output(notes_root, run_date, data_as_of, "skipped", None, content_type="daily")
             return 0
 
         # ── Forbidden word scan ─────────────────────────────────────────────
-        fw_violations = _check_forbidden(narrative_obj)
+        fw_violations = check_forbidden_words(narrative_obj)
         if fw_violations:
             log(f"forbidden word violation (attempt {attempt}): {fw_violations}")
             if attempt < 2:
                 log("retrying LLM call...")
                 continue
             log("giving up after 2 attempts — skip")
-            _write_output(notes_root, run_date, data_as_of, "skipped", None)
+            write_output(notes_root, run_date, data_as_of, "skipped", None, content_type="daily")
             return 0
 
         # ── All checks passed ───────────────────────────────────────────────
@@ -900,15 +574,16 @@ def main() -> int:
         log("starting M7 stories generation (P2)...")
         m7_stories, m7_status = _build_m7_stories(notes_root, run_date, llm)
 
-        _write_output(
+        write_output(
             notes_root, run_date, data_as_of,
             "ok", narrative_obj,
+            content_type="daily",
             m7_status=m7_status, m7_stories=m7_stories,
         )
         return 0
 
     # Should not reach here, but guard
-    _write_output(notes_root, run_date, data_as_of, "skipped", None)
+    write_output(notes_root, run_date, data_as_of, "skipped", None, content_type="daily")
     return 0
 
 
