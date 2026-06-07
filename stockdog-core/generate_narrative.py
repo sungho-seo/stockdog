@@ -586,6 +586,9 @@ def _write_output(notes_root: Path, run_date: str, data_as_of: str,
 
     m7_status: "ok" | "skipped"
     m7_stories: list of {ticker, story} or None
+
+    IMPR-071: If status=="ok", also archive the full payload to
+    archive/<run_date>.json for permanent data retention.
     """
     out_dir = notes_root / "raw" / "stockdog" / "narrative"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -607,6 +610,20 @@ def _write_output(notes_root: Path, run_date: str, data_as_of: str,
             encoding="utf-8",
         )
         log(f"wrote {out_path} (status={status}, m7_status={m7_status})")
+
+        # IMPR-071 D0: Archive to date-stamped file only on success
+        if status == "ok":
+            archive_dir = out_dir / "archive"
+            archive_dir.mkdir(parents=True, exist_ok=True)
+            archive_path = archive_dir / f"{run_date}.json"
+            try:
+                archive_path.write_text(
+                    json.dumps(payload, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+                log(f"archived {archive_path}")
+            except OSError as e:
+                log(f"failed to archive ({e})")
     except OSError as e:
         log(f"failed to write output ({e})")
 

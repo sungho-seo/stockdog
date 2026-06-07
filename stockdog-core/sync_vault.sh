@@ -179,7 +179,7 @@ publish_narrative() {
     {
         ( cd "$DIR" && /usr/bin/docker compose run --rm stockdog \
             python generate_narrative.py /notes "$DATE" )
-        git add "raw/stockdog/narrative/narrative.json"
+        git add "raw/stockdog/narrative/"
     } || echo "[sync_vault.sh] publish_narrative: skipped (non-fatal)"
 }
 
