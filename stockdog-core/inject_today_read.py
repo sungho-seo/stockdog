@@ -22,6 +22,7 @@ Exit codes:
 Host stdlib only.
 """
 
+import json
 import os
 import re
 import sys
@@ -56,6 +57,61 @@ def atomic_write(path: Path, content: str) -> None:
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(content, encoding="utf-8")
     os.replace(tmp, path)
+
+
+def _write_signals_archive(signals_path: Path, date: str, today_read: str = None) -> None:
+    """Write/update the signals archive entry with confirmed read text.
+
+    IMPR-067 ongoing archive — called AFTER a successful inject to update
+    the existing archive entry (written first by render_signals_tracker.py
+    with counts + null read) with the confirmed LLM-generated read text.
+
+    Reads the existing archive to preserve major/watch/notable, then overwrites
+    with the new read text. Always idempotent: same date overwrites.
+
+    Non-fatal: archive write failure must never break the inject flow.
+    """
+    try:
+        # Derive archive dir from signals_path (signals_path is typically
+        # .../10_Public/trackers/signals.md → archive should be
+        # .../raw/stockdog/signals/archive/)
+        vault_root = signals_path.parent.parent.parent
+        archive_dir = vault_root / "raw" / "stockdog" / "signals" / "archive"
+        archive_dir.mkdir(parents=True, exist_ok=True)
+
+        archive_path = archive_dir / f"{date}.json"
+
+        # Read existing entry to preserve counts
+        major, watch, notable = 0, 0, False
+        if archive_path.is_file():
+            try:
+                existing = json.loads(archive_path.read_text(encoding="utf-8"))
+                major = existing.get("major", 0)
+                watch = existing.get("watch", 0)
+                notable = existing.get("notable", False)
+            except (OSError, ValueError):
+                pass
+
+        # Update with confirmed read text
+        archive_entry = {
+            "date": date,
+            "today_read": today_read,
+            "major": major,
+            "watch": watch,
+            "notable": notable,
+        }
+
+        archive_json = json.dumps(archive_entry, ensure_ascii=False, indent=2)
+
+        # Atomic write (temp + os.replace)
+        tmp_path = archive_path.with_suffix(archive_path.suffix + ".tmp")
+        tmp_path.write_text(archive_json, encoding="utf-8")
+        os.replace(tmp_path, archive_path)
+
+    except Exception as e:
+        # Non-fatal: archive write failure must never break inject.
+        # Just log and continue.
+        print(f"warning: signals archive write failed ({e}) — continuing", file=sys.stderr)
 
 
 def main() -> int:
@@ -101,6 +157,12 @@ def main() -> int:
     atomic_write(signals_path, updated)
 
     print(f"injected {len(text)} chars into TODAY_READ block (date {date}) -> {signals_path}")
+
+    # IMPR-067 ongoing — update archive entry with confirmed read text.
+    # The entry was first written by render_signals_tracker.py with counts + null read;
+    # this updates it with the confirmed LLM-generated text. Non-fatal failure.
+    _write_signals_archive(signals_path, date, text)
+
     return 0
 
 

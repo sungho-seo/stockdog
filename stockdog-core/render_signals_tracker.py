@@ -860,6 +860,44 @@ def _cs_line(card):
     return f"- **[{card['cs']}]** {card['text']} ·{card['source']} ·{card['asof']}"
 
 
+def _write_signals_archive(vault_root: Path, run_date: str, major: int, watch: int, notable: bool, today_read: str = None) -> None:
+    """IMPR-067 ongoing archive write — record signal counts + read for every day.
+
+    Writes raw/stockdog/signals/archive/<date>.json with:
+      {date, today_read, major, watch, notable}
+
+    Called from render_signals_tracker.py for ALL days (even quiet ones).
+    On notable days with LLM read, inject_today_read.py will overwrite with
+    the confirmed read text. On quiet days (notable=false), today_read=null.
+
+    Idempotent: same date overwrites. Non-fatal: archive write failure
+    must never break the render flow.
+    """
+    try:
+        archive_dir = vault_root / "raw" / "stockdog" / "signals" / "archive"
+        archive_dir.mkdir(parents=True, exist_ok=True)
+
+        archive_entry = {
+            "date": run_date,
+            "today_read": today_read,  # null on quiet days, or confirmed text on notable days
+            "major": major,
+            "watch": watch,
+            "notable": notable,
+        }
+
+        archive_path = archive_dir / f"{run_date}.json"
+        archive_json = json.dumps(archive_entry, ensure_ascii=False, indent=2)
+
+        # Atomic write (temp + os.replace)
+        tmp_path = archive_path.with_suffix(archive_path.suffix + ".tmp")
+        tmp_path.write_text(archive_json, encoding="utf-8")
+        os.replace(tmp_path, archive_path)
+
+    except Exception as e:
+        # Non-fatal: archive write failure must never break the render.
+        print(f"[render_signals_tracker] archive write failed ({e}) — continuing", file=sys.stderr)
+
+
 def main() -> int:
     if len(sys.argv) < 2:
         print("usage: render_signals_tracker.py <vault_root> [<date>]", file=sys.stderr)
@@ -1111,6 +1149,7 @@ def main() -> int:
 
     n_major = len(major_cs) + len(major_flags)
     n_watch = min(len(watch_all), WATCH_CAP)
+    n_notable = (n_major + n_watch) > 0
 
     # IMPR-067 — emit gate sidecar for the automated "오늘의 읽기" generator.
     # generate_signals_read.py reads this to decide whether to call the LLM at all
@@ -1124,7 +1163,7 @@ def main() -> int:
             "date": run_date,
             "major": n_major,
             "watch": n_watch,
-            "notable": (n_major + n_watch) > 0,
+            "notable": n_notable,
         })
         # Atomic write (temp + os.replace) for consistency
         gate_tmp = gate_path.with_suffix(gate_path.suffix + ".tmp")
@@ -1132,6 +1171,11 @@ def main() -> int:
         os.replace(gate_tmp, gate_path)
     except OSError as e:
         print(f"[render_signals_tracker] gate sidecar write skipped (non-fatal): {e}", file=sys.stderr)
+
+    # IMPR-067 ongoing — write archive entry for every day (counts + null read).
+    # On notable days with LLM read, inject_today_read.py will overwrite with
+    # confirmed text. Non-fatal: archive write failure must never break render.
+    _write_signals_archive(vault_root, run_date, n_major, n_watch, n_notable, today_read=None)
 
     print(
         f"[render_signals_tracker] wrote {out_path} "
