@@ -183,6 +183,26 @@ publish_narrative() {
     } || echo "[sync_vault.sh] publish_narrative: skipped (non-fatal)"
 }
 
+# IMPR-071 D1+D2 — narrative timeline index + detail pages.
+# Renders narrative archive into public markdown pages (stdlib-only, no LLM).
+# Stages two renderers AFTER publish_narrative (archive must be fresh):
+#   1. render_stories_index.py → 10_Public/daily-stories/index.md (all narratives, newest-first)
+#   2. render_stories_detail.py → 10_Public/daily-stories/<date>.md (one page per narrative)
+# Non-zero exit (no narratives in archive) → skip; pages unchanged.
+# git add scoped to 10_Public/daily-stories/ ONLY — never -A.
+publish_stories() {
+    local idx_helper="$DIR/render_stories_index.py"
+    local detail_helper="$DIR/render_stories_detail.py"
+    [ -f "$idx_helper" ] && [ -f "$detail_helper" ] || return 0
+
+    if python3 "$idx_helper" "$VAULT_DIR" "$DATE" && \
+       python3 "$detail_helper" "$VAULT_DIR"; then
+        git add "10_Public/daily-stories/"
+    else
+        echo "[sync_vault.sh] publish_stories: no narratives to render — skip (pages unchanged)"
+    fi
+}
+
 cd "$VAULT_DIR" || {
     send_telegram "⚠️ Vault sync failed: skyler directory not found at $VAULT_DIR"
     exit 1
@@ -242,6 +262,10 @@ publish_signals_read
 # IMPR-064 P1 — gated daily narrative JSON (after signals_read so all tracker
 # pages are current; writes raw/stockdog/narrative/narrative.json).
 publish_narrative
+
+# IMPR-071 D1+D2 — narrative timeline index + detail pages (after publish_narrative
+# so archive is fresh; stages 10_Public/daily-stories/).
+publish_stories
 
 # Skip if nothing changed
 if git diff --cached --quiet; then
