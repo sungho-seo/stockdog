@@ -898,15 +898,24 @@ def _write_signals_archive(vault_root: Path, run_date: str, major: int, watch: i
         print(f"[render_signals_tracker] archive write failed ({e}) — continuing", file=sys.stderr)
 
 
-def main() -> int:
-    if len(sys.argv) < 2:
-        print("usage: render_signals_tracker.py <vault_root> [<date>]", file=sys.stderr)
-        return 1
+def compute_scored_flags(vault_root, asof=None):
+    """Pure: load snapshots + run all collectors + cross-signals. No file writes, no print.
 
-    vault_root = Path(sys.argv[1]).expanduser().resolve()
-    want_date = sys.argv[2] if len(sys.argv) > 2 else _date.today().strftime("%Y-%m-%d")
-    asof = _parse_date(want_date) or _date.today()
-    run_date = asof.isoformat()
+    Returns dict with keys:
+      - flags: list of all individual flags (static + live)
+      - static_flags: list of static flags (banner-only)
+      - live_flags: list of live flags (main list candidates)
+      - cs_cards: list of cross-signal cards
+      - freshness: dict of {domain: freshness_date}
+      - domain_present: dict of {domain: bool}
+      - asof: the as-of date (date object)
+
+    Single source of truth for severity scoring — imported by generate_preview_story.py (IMPR-076).
+    Raises ValueError if no snapshots available.
+    """
+    if asof is None:
+        asof = _date.today()
+    want_date = asof.isoformat()
 
     short_data = load_category(vault_root, "short", want_date)
     insider_data = load_category(vault_root, "insider", want_date)
@@ -922,8 +931,7 @@ def main() -> int:
         "fg": bool(metrics_snap and (metrics_snap.get("series") or [])),
     }
     if not any(domain_present.values()):
-        print(f"[render_signals_tracker] no snapshots available for {want_date} — skipping write.")
-        return 2
+        raise ValueError(f"no snapshots available for {want_date}")
 
     short_flags, short_fresh = collect_short(short_data, vault_root)
     insider_flags, insider_fresh = collect_insider(insider_data, vault_root, asof)
@@ -942,6 +950,41 @@ def main() -> int:
     live_flags = [f for f in all_flags if not f["static"]]
 
     cs_cards = build_cross_signals(live_flags)
+
+    return {
+        "flags": all_flags,
+        "static_flags": static_flags,
+        "live_flags": live_flags,
+        "cs_cards": cs_cards,
+        "freshness": freshness,
+        "domain_present": domain_present,
+        "asof": asof,
+    }
+
+
+def main() -> int:
+    if len(sys.argv) < 2:
+        print("usage: render_signals_tracker.py <vault_root> [<date>]", file=sys.stderr)
+        return 1
+
+    vault_root = Path(sys.argv[1]).expanduser().resolve()
+    want_date = sys.argv[2] if len(sys.argv) > 2 else _date.today().strftime("%Y-%m-%d")
+    asof = _parse_date(want_date) or _date.today()
+    run_date = asof.isoformat()
+
+    try:
+        result = compute_scored_flags(vault_root, asof=asof)
+    except ValueError:
+        print(f"[render_signals_tracker] no snapshots available for {want_date} — skipping write.")
+        return 2
+
+    # Unpack result dict
+    all_flags = result["flags"]
+    static_flags = result["static_flags"]
+    live_flags = result["live_flags"]
+    cs_cards = result["cs_cards"]
+    freshness = result["freshness"]
+    domain_present = result["domain_present"]
 
     # remaining standalone flags (cross-consumed removed)
     standalone = [f for f in live_flags if not f["consumed"]]
@@ -978,6 +1021,10 @@ def main() -> int:
             summary[d]["watch"] += 1
 
     # ---- context banner (static) values
+    # Need to reload snapshots for banner context (they were consumed during compute_scored_flags)
+    macro_snap = load_macro_snapshot(vault_root)
+    metrics_snap = load_metrics_snapshot(vault_root)
+
     fg_series = (metrics_snap or {}).get("series") or []
     fg_latest = _last_valid([r.get("fg_score") for r in fg_series]) if fg_series else None
     fg_txt = f"{int(round(fg_latest))}({fg_zone(fg_latest)})" if fg_latest is not None else "—"
