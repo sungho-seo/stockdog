@@ -36,6 +36,7 @@ from narrative_common import (
     extract_macro_excerpt,
     get_llm, write_output, check_forbidden_words,
     set_wall_clock, cancel_wall_clock,
+    extract_json_from_response,
     SCHEMA_VERSION,
 )
 from render_signals_tracker import compute_scored_flags, SCORE_WATCH
@@ -417,7 +418,7 @@ def main() -> int:
             ("system", PREVIEW_SYSTEM_PROMPT),
             ("human", PREVIEW_HUMAN_TEMPLATE),
         ])
-        chain = prompt | llm.bind(max_tokens=2000, temperature=0.4)
+        chain = prompt | llm.bind(max_tokens=4000, temperature=0.4)
     except Exception as e:
         log(f"prompt/chain build failed ({e}) — skip")
         write_output(notes_root, monday_date, data_as_of, "skipped", None, content_type="preview")
@@ -453,13 +454,23 @@ def main() -> int:
             write_output(notes_root, monday_date, data_as_of, "skipped", None, content_type="preview")
             return 0
 
-        # ── Parse JSON ──────────────────────────────────────────────────────
-        stripped = re.sub(r"^```(?:json)?\s*", "", raw_text, flags=re.IGNORECASE)
-        stripped = re.sub(r"\s*```$", "", stripped).strip()
-        try:
-            preview_obj = json.loads(stripped)
-        except (ValueError, json.JSONDecodeError) as e:
-            log(f"JSON parse failed ({e}) (attempt {attempt})")
+        # ── Parse JSON (robust extraction + debug capture) ──────────────────
+        preview_obj = extract_json_from_response(raw_text)
+        if preview_obj is None:
+            log(f"JSON extraction failed (attempt {attempt})")
+            # Debug capture: write raw LLM response to temp file for diagnosis
+            try:
+                debug_dir = notes_root / "raw" / "stockdog" / "narrative"
+                debug_dir.mkdir(parents=True, exist_ok=True)
+                debug_path = debug_dir / f"_preview_debug_{monday_date}.txt"
+                debug_path.write_text(
+                    f"# Preview parse failure debug — {monday_date} attempt {attempt}\n\n"
+                    f"Raw LLM response (first 10000 chars):\n{raw_text[:10000]}",
+                    encoding="utf-8"
+                )
+                log(f"wrote debug file {debug_path}")
+            except OSError as e:
+                log(f"failed to write debug file ({e})")
             if attempt < 2:
                 log("retrying LLM call...")
                 continue

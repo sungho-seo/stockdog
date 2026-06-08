@@ -435,3 +435,49 @@ def set_wall_clock(seconds: int = LLM_WALL_CLOCK_SECONDS) -> None:
 def cancel_wall_clock() -> None:
     """Cancel wall-clock alarm."""
     signal.alarm(0)
+
+
+# ---------------------------------------------------------------------------
+# Robust JSON extraction
+# ---------------------------------------------------------------------------
+
+def extract_json_from_response(raw_text: str) -> dict | None:
+    """Extract JSON object from LLM response, handling truncation and prose.
+
+    Attempts to parse JSON by:
+    1. Stripping markdown code fences (```json ... ``` or ``` ... ```)
+    2. Extracting the outermost {...} if there's leading/trailing prose
+    3. Calling json.loads on the extracted string
+
+    Returns:
+        Parsed dict on success, None on failure (logs reason).
+    """
+    if not raw_text or not raw_text.strip():
+        log("extract_json_from_response: empty input")
+        return None
+
+    # Step 1: Strip markdown code fences
+    stripped = re.sub(r"^```(?:json)?\s*", "", raw_text, flags=re.IGNORECASE)
+    stripped = re.sub(r"\s*```$", "", stripped).strip()
+
+    # Step 2: Try direct parse first (most common case)
+    try:
+        return json.loads(stripped)
+    except (ValueError, json.JSONDecodeError):
+        pass
+
+    # Step 3: Extract outermost {...} to handle leading/trailing prose
+    # Find first { and last }
+    first_brace = stripped.find("{")
+    last_brace = stripped.rfind("}")
+
+    if first_brace == -1 or last_brace == -1 or last_brace <= first_brace:
+        log(f"extract_json_from_response: no valid {...} found in response")
+        return None
+
+    extracted = stripped[first_brace : last_brace + 1]
+    try:
+        return json.loads(extracted)
+    except (ValueError, json.JSONDecodeError) as e:
+        log(f"extract_json_from_response: JSON still invalid after brace extraction ({e})")
+        return None
