@@ -656,9 +656,18 @@ def main() -> int:
     lines.extend(render_regime_section(snapshot))
     lines.extend(render_short_section(short_data, vault_root, snapshot))
     lines.extend(render_insider_section(insider_data, vault_root, asof))
+    lines.append("")
     lines.append(
-        f"*데이터 출처: SEC EDGAR (Form 4), FINRA RegSHO, CNN F&G / VIX / UST. "
-        f"자동 생성 — StockDog M7 파이프라인. 마지막 갱신: {data_date}.*"
+        '<details class="dash-refs" open>\n'
+        '<summary>출처 / References</summary>\n'
+        '<div class="dash-refs-body">\n'
+        '<p class="dash-refs-lede">데이터 출처 · 자동 생성 — 관찰용이며 매매 시그널이 아닙니다.</p>\n'
+        '<a class="dash-ref-chip" href="https://www.sec.gov" target="_blank" rel="noopener">sec.gov</a>\n'
+        '<a class="dash-ref-chip" href="https://www.finra.org" target="_blank" rel="noopener">finra.org</a>\n'
+        '<a class="dash-ref-chip" href="https://www.cnn.com/markets/fear-and-greed" target="_blank" rel="noopener">cnn.com</a>\n'
+        f'<p class="dash-refs-meta">자동 생성 · {data_date}</p>\n'
+        '</div>\n'
+        '</details>'
     )
     lines.append("")
 

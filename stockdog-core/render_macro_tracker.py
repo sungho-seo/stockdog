@@ -447,9 +447,17 @@ def main() -> int:
     lines.extend(render_policy(daily, asof))
     lines.extend(render_fx(daily, n))
     lines.extend(render_sentiment_ref())
+    lines.append("")
     lines.append(
-        f"*데이터 출처: FRED (UST 금리·스프레드·EFFR·CPI·PPI·광의 달러), yfinance (USD/KRW). "
-        f"자동 생성 — StockDog US 파이프라인. 마지막 갱신: {updated}.*"
+        '<details class="dash-refs" open>\n'
+        '<summary>출처 / References</summary>\n'
+        '<div class="dash-refs-body">\n'
+        '<p class="dash-refs-lede">데이터 출처 · 자동 생성 — 관찰용이며 매매 시그널이 아닙니다.</p>\n'
+        '<a class="dash-ref-chip" href="https://fred.stlouisfed.org" target="_blank" rel="noopener">fred.stlouisfed.org</a>\n'
+        '<a class="dash-ref-chip" href="https://finance.yahoo.com" target="_blank" rel="noopener">finance.yahoo.com</a>\n'
+        f'<p class="dash-refs-meta">자동 생성 · {updated}</p>\n'
+        '</div>\n'
+        '</details>'
     )
     lines.append("")
 

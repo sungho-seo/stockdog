@@ -315,8 +315,16 @@ def main() -> int:
     if extra:
         lines.extend(render_group("기타", extra, snap_tickers))
 
+    lines.append("")
     lines.append(
-        f"*데이터 출처: yfinance (가격·거래량). 자동 생성 — StockDog. 마지막 갱신: {updated}.*"
+        '<details class="dash-refs" open>\n'
+        '<summary>출처 / References</summary>\n'
+        '<div class="dash-refs-body">\n'
+        '<p class="dash-refs-lede">데이터 출처 · 자동 생성 — 관찰용이며 매매 시그널이 아닙니다.</p>\n'
+        '<a class="dash-ref-chip" href="https://finance.yahoo.com" target="_blank" rel="noopener">finance.yahoo.com</a>\n'
+        f'<p class="dash-refs-meta">자동 생성 · {updated}</p>\n'
+        '</div>\n'
+        '</details>'
     )
     lines.append("")
 

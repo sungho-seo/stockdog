@@ -1131,10 +1131,21 @@ def main() -> int:
     L.append("- **이 페이지는 관찰용이며 매매 시그널이 아닙니다.**")
     L.append("")
 
+    L.append("")
     L.append(
-        f"*데이터 출처: 트래커 스냅샷 재집계 (SEC Form 4 · FINRA RegSHO · FRED UST · "
-        f"yfinance · CNN F&G). 원본 트래커: [[trackers/m7|M7]] · [[trackers/macro|매크로]] · "
-        f"[[trackers/watchlist|워치리스트]]. 자동 생성 — StockDog. 마지막 갱신: {run_date}.*"
+        '<details class="dash-refs" open>\n'
+        '<summary>출처 / References</summary>\n'
+        '<div class="dash-refs-body">\n'
+        '<p class="dash-refs-lede">데이터 출처 · 자동 생성 — 관찰용이며 매매 시그널이 아닙니다.</p>\n'
+        '<a class="dash-ref-chip" href="https://www.sec.gov" target="_blank" rel="noopener">sec.gov</a>\n'
+        '<a class="dash-ref-chip" href="https://www.finra.org" target="_blank" rel="noopener">finra.org</a>\n'
+        '<a class="dash-ref-chip" href="https://fred.stlouisfed.org" target="_blank" rel="noopener">fred.stlouisfed.org</a>\n'
+        '<a class="dash-ref-chip" href="https://finance.yahoo.com" target="_blank" rel="noopener">finance.yahoo.com</a>\n'
+        '<a class="dash-ref-chip" href="https://www.cnn.com/markets/fear-and-greed" target="_blank" rel="noopener">cnn.com</a>\n'
+        f'<p class="dash-refs-meta">자동 생성 · {run_date}</p>\n'
+        '<p class="dash-refs-note">원본 트래커: <a href="/trackers/m7">M7</a> · <a href="/trackers/macro">매크로</a> · <a href="/trackers/watchlist">워치리스트</a></p>\n'
+        '</div>\n'
+        '</details>'
     )
     L.append("")
 
