@@ -441,6 +441,31 @@ def cancel_wall_clock() -> None:
 # Positioning computation (Python-owned, deterministic)
 # ---------------------------------------------------------------------------
 
+def _scrub_positioning_text(text: str) -> str:
+    """Scrub internal/English-jargon codes from positioning line.
+
+    Transformations (IMPR-076):
+    - (~Nd, building) → (표본 누적 중)   [regex: \(~\d+d,\s*building\)]
+    - standalone (building) → (표본 누적 중)
+    - (breach) → remove entirely (just drop the "(breach)" token)
+    - (~Nd) → (최근 N일)   [regex: \(~(\d+)d\) → (최근 \1일)]
+    - Keep Korean forms like ~5일 내 alone.
+    """
+    # 1. (~Nd, building) → (표본 누적 중)
+    text = re.sub(r'\(~\d+d,\s*building\)', '(표본 누적 중)', text)
+
+    # 2. standalone (building) → (표본 누적 중)
+    text = re.sub(r'\(building\)', '(표본 누적 중)', text)
+
+    # 3. (breach) → remove entirely
+    text = re.sub(r'\(breach\)', '', text)
+
+    # 4. (~Nd) → (최근 N일)  [only English form ~Nd, not Korean ~5일 내]
+    text = re.sub(r'\(~(\d+)d\)', r'(최근 \1일)', text)
+
+    return text
+
+
 def compute_preview_positioning(live_flags: list, cs_cards: list, preview_top_n: int = 7) -> tuple[list, int]:
     """Compute deterministic positioning list for preview narrative.
 
@@ -496,9 +521,12 @@ def compute_preview_positioning(live_flags: list, cs_cards: list, preview_top_n:
     # Build output list: each item is {ticker, line, tier}
     positioning_list = []
     for item in capped:
+        raw_line = item.get("text", "")
+        # Scrub internal codes from the line (IMPR-076)
+        scrubbed_line = _scrub_positioning_text(raw_line)
         positioning_list.append({
             "ticker": item.get("ticker", "—"),
-            "line": item.get("text", ""),  # Use the scored flag's deterministic text
+            "line": scrubbed_line,
             "tier": item.get("tier", "C"),  # tier from the flag (or "C" for CS cards)
         })
 

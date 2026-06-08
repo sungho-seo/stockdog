@@ -81,14 +81,23 @@ def main():
             hero = narrative.get("hero_oneliner", "")
             keywords = narrative.get("weekly_narrative", {}).get("keywords", [])
             date_label = f"이번 주 총정리 ({report_date})"
+            badge = "주간"
+        elif content_type == "preview":
+            hero = narrative.get("hero_oneliner", "")
+            keywords = narrative.get("themes", []) if isinstance(narrative.get("themes"), list) else []
+            if isinstance(keywords, list) and keywords and isinstance(keywords[0], dict):
+                # Extract keywords from themes array of dicts
+                keywords = [t.get("title", "") for t in keywords[:3]]
+            date_label = f"이번 주 미리보기 ({report_date})"
+            badge = "프리뷰"
         else:
             # daily (default)
             hero = narrative.get("narrative", {}).get("hero_oneliner", "")
             keywords = narrative.get("narrative", {}).get("market_narrative", {}).get("keywords", [])
             date_label = report_date
+            badge = ""
 
         # Date + hero_oneliner as header with link to detail page
-        badge = "주간" if content_type == "weekly" else ""
         badge_str = f" **{badge}**" if badge else ""
         lines.append(f"## [{date_label}](/daily-stories/{report_date}){badge_str}")
         lines.append("")
