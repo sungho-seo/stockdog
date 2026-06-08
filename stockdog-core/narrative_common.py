@@ -332,7 +332,8 @@ def write_output(notes_root: Path, run_date: str, data_as_of: str,
                  status: str, narrative,
                  content_type: str = "daily",
                  m7_status: str = "skipped", m7_stories=None,
-                 weekly_fields: dict = None) -> None:
+                 weekly_fields: dict = None,
+                 preview_fields: dict = None) -> None:
     """Write narrative.json (always, even on skip/failure).
 
     Args:
@@ -341,10 +342,11 @@ def write_output(notes_root: Path, run_date: str, data_as_of: str,
         data_as_of: Data cutoff date (frontmatter from report)
         status: "ok" | "skipped"
         narrative: Narrative object (dict) or None
-        content_type: "daily" | "weekly" (default "daily")
+        content_type: "daily" | "weekly" | "preview" (default "daily")
         m7_status: "ok" | "skipped" (daily only)
         m7_stories: List of {ticker, story} dicts (daily only, or None)
         weekly_fields: Extra fields for weekly (e.g., hero_oneliner, themes, macro_flow, m7_weekly)
+        preview_fields: Extra fields for preview (e.g., hero_oneliner, calendar, macro_position, positioning)
 
     IMPR-071: If status=="ok", also archive the full payload to
     archive/<run_date>.json for permanent data retention.
@@ -371,6 +373,10 @@ def write_output(notes_root: Path, run_date: str, data_as_of: str,
     elif content_type == "weekly":
         if weekly_fields:
             payload.update(weekly_fields)
+    # Preview-specific fields
+    elif content_type == "preview":
+        if preview_fields:
+            payload.update(preview_fields)
 
     try:
         out_path.write_text(

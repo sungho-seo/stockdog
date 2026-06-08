@@ -32,7 +32,7 @@ def load_json(path: Path):
 
 
 def render_detail_page(vault_root: Path, narrative: dict) -> bool:
-    """Write a single detail page for one narrative (daily or weekly).
+    """Write a single detail page for one narrative (daily, weekly, or preview).
 
     Returns True if successful, False otherwise.
     """
@@ -48,6 +48,8 @@ def render_detail_page(vault_root: Path, narrative: dict) -> bool:
     # Branch based on content type
     if content_type == "weekly":
         return render_weekly_detail_page(vault_root, narrative)
+    elif content_type == "preview":
+        return render_preview_detail_page(vault_root, narrative)
     else:
         # daily (default)
         return render_daily_detail_page(vault_root, narrative)
@@ -173,6 +175,130 @@ def render_daily_detail_page(vault_root: Path, narrative: dict) -> bool:
 
     # Footer disclaimer
     add_footer_disclaimer(lines)
+
+    # Write output
+    out_dir = vault_root / "10_Public" / "daily-stories"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_file = out_dir / f"{report_date}.md"
+
+    with out_file.open("w", encoding="utf-8") as fh:
+        fh.write("\n".join(lines))
+
+    return True
+
+
+def render_preview_detail_page(vault_root: Path, narrative: dict) -> bool:
+    """Write a single detail page for a preview narrative (Monday preview)."""
+    report_date = narrative.get("report_date")
+
+    hero = narrative.get("hero_oneliner", "")
+    calendar = narrative.get("calendar", [])
+    macro_position = narrative.get("macro_position", {})
+    macro_story = macro_position.get("story", "")
+    kr_impact = macro_position.get("kr_impact", "")
+
+    positioning = narrative.get("positioning", [])
+    positioning_overflow = narrative.get("positioning_overflow", 0)
+
+    themes = narrative.get("themes", [])
+    data_as_of = narrative.get("data_as_of", "")
+
+    # Build markdown for preview narrative
+    lines = []
+    lines.append("---")
+    lines.append(f'title: "📅 이번 주 미리보기 — {report_date}"')
+    lines.append("public: true")
+    lines.append("type: note")
+    lines.append(f"date: {report_date}")
+    lines.append("tags:")
+    lines.append("  - ctx/public")
+    lines.append("  - stockdog")
+    lines.append("  - preview-story")
+    lines.append("---")
+    lines.append("")
+
+    # H1 with date + hero oneliner
+    lines.append(f"# 📅 이번 주 미리보기 — {report_date}")
+    lines.append("")
+    if hero:
+        lines.append(f"*{hero}*")
+        lines.append("")
+
+    # Economic calendar section
+    if calendar:
+        lines.append("## 이번 주 경제 일정")
+        lines.append("")
+        for event in calendar:
+            name = event.get("name", "")
+            event_date = event.get("date", "")
+            days = event.get("days_until", 0)
+            if name and event_date:
+                lines.append(f"- **{name}** ({event_date}, D-{days})")
+        lines.append("")
+
+    # Macro position section
+    if macro_story:
+        lines.append("## 출발점 — 거시경제 환경")
+        lines.append("")
+        lines.append(macro_story)
+        lines.append("")
+        if kr_impact:
+            lines.append("### 한국 시장에 미치는 영향")
+            lines.append("")
+            lines.append(kr_impact)
+            lines.append("")
+        lines.append("")
+
+    # Positioning section (header always renders)
+    lines.append("## 개별 종목 포지션")
+    lines.append("")
+
+    if positioning:
+        lines.append("현재 시장의 주목할 포지션입니다.")
+        lines.append("")
+        for item in positioning:
+            ticker = item.get("ticker", "—")
+            line = item.get("line", "")
+            if ticker and line:
+                lines.append(f"### {ticker}")
+                lines.append("")
+                lines.append(line)
+                lines.append("")
+    else:
+        # No positioning items
+        lines.append("특이 포지션이 없습니다.")
+        lines.append("")
+
+    # Overflow line renders whenever overflow > 0 (independent of items)
+    if positioning_overflow > 0:
+        lines.append(f"**+{positioning_overflow}개 종목 추가 관찰 →** [시그널 트래커](/trackers/signals)")
+        lines.append("")
+
+    # Themes section
+    if themes:
+        lines.append("## 지켜볼 테마")
+        lines.append("")
+        for theme in themes:
+            title = theme.get("title", "")
+            story = theme.get("story", "")
+            if title:
+                lines.append(f"### {title}")
+                lines.append("")
+                if story:
+                    lines.append(story)
+                    lines.append("")
+        lines.append("")
+
+    # Footer with disclaimer + data source note
+    lines.append("---")
+    lines.append("")
+    lines.append("## 데이터 기준")
+    lines.append("")
+    if data_as_of:
+        lines.append(f"이 프리뷰의 데이터 기준은 {data_as_of} 미국 마감입니다.")
+    lines.append("")
+    lines.append("**주의**: 실적 일정, 컨센서스, 목표가는 포함하지 않습니다. 이 페이지는 시장 관찰을 바탕으로 한 정성적 해석입니다. 투자 판단의 근거가 될 수 없으며, 모든 투자 결정은 개별 투자자의 책임입니다.")
+    lines.append("")
 
     # Write output
     out_dir = vault_root / "10_Public" / "daily-stories"
