@@ -438,6 +438,74 @@ def cancel_wall_clock() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Positioning computation (Python-owned, deterministic)
+# ---------------------------------------------------------------------------
+
+def compute_preview_positioning(live_flags: list, cs_cards: list, preview_top_n: int = 7) -> tuple[list, int]:
+    """Compute deterministic positioning list for preview narrative.
+
+    Returns (positioning_list, overflow) where:
+    - positioning_list: list of {ticker, line, tier} dicts (capped at preview_top_n)
+    - overflow: count of distinct tickers BEYOND the cap
+
+    IMPR-076: Positioning is Python-owned — the LLM's positioning JSON is ignored.
+    The line text comes from the scored flag's own text (the human-readable text
+    from compute_scored_flags, NOT LLM-generated).
+
+    DEDUP: Each ticker appears AT MOST ONCE. For each ticker with multiple candidates
+    (from both live_flags and cs_cards), we keep the single best entry (highest score,
+    tie-break preferring CS cards because they're richer/more informative).
+    """
+    from render_signals_tracker import SCORE_WATCH
+
+    # Keep only flags with score >= SCORE_WATCH and domain in {short,insider,watchlist}
+    filtered = [f for f in live_flags
+                if f.get("score", 0) >= SCORE_WATCH
+                and f.get("domain", "") in {"short", "insider", "watchlist"}]
+
+    # Also keep CS cards (cross-signals)
+    cs_selected = [c for c in cs_cards if c.get("cs") in ("CS-1", "CS-2", "CS-3")]
+
+    # Combine all candidates
+    combined = filtered + cs_selected
+
+    # Group by ticker and keep best entry per ticker
+    ticker_map = {}
+    for item in combined:
+        ticker = item.get("ticker", "—")
+        score = item.get("score", 0)
+        is_cs = "cs" in item  # True if this is a CS card
+
+        if ticker not in ticker_map:
+            ticker_map[ticker] = (score, is_cs, item)
+        else:
+            existing_score, existing_is_cs, existing_item = ticker_map[ticker]
+            # Keep the item with higher score; if tied, prefer CS card
+            if score > existing_score or (score == existing_score and is_cs and not existing_is_cs):
+                ticker_map[ticker] = (score, is_cs, item)
+
+    # Extract deduplicated items and rank by score DESC
+    deduped = [item for _, _, item in ticker_map.values()]
+    deduped.sort(key=lambda x: -x.get("score", 0))
+
+    # Cap at preview_top_n
+    capped = deduped[:preview_top_n]
+    # Overflow = distinct tickers beyond the cap
+    overflow = max(0, len(deduped) - preview_top_n)
+
+    # Build output list: each item is {ticker, line, tier}
+    positioning_list = []
+    for item in capped:
+        positioning_list.append({
+            "ticker": item.get("ticker", "—"),
+            "line": item.get("text", ""),  # Use the scored flag's deterministic text
+            "tier": item.get("tier", "C"),  # tier from the flag (or "C" for CS cards)
+        })
+
+    return positioning_list, overflow
+
+
+# ---------------------------------------------------------------------------
 # Robust JSON extraction
 # ---------------------------------------------------------------------------
 

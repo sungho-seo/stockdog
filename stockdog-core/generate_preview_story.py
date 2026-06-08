@@ -37,6 +37,7 @@ from narrative_common import (
     get_llm, write_output, check_forbidden_words,
     set_wall_clock, cancel_wall_clock,
     extract_json_from_response,
+    compute_preview_positioning,
     SCHEMA_VERSION,
 )
 from render_signals_tracker import compute_scored_flags, SCORE_WATCH
@@ -258,21 +259,12 @@ def _validate_preview_narrative(obj: dict) -> list[str]:
         if not isinstance(mp.get("kr_impact"), str) or not mp["kr_impact"].strip():
             errors.append("macro_position.kr_impact is empty")
 
-    # positioning
-    pos = obj.get("positioning", [])
-    if not isinstance(pos, list):
-        errors.append("positioning is not a list")
-    else:
-        for i, item in enumerate(pos):
-            if not isinstance(item, dict):
-                errors.append(f"positioning[{i}] is not a dict")
-                continue
-            if not item.get("ticker") or not item.get("line"):
-                errors.append(f"positioning[{i}] missing ticker or line")
+    # positioning (IMPR-076: not required from LLM — Python-owned)
+    # LLM's positioning is ignored; validation of this field is skipped
+    # to allow the LLM to omit it or return garbage without failing validation.
 
-    # positioning_overflow
-    if not isinstance(obj.get("positioning_overflow"), int):
-        errors.append("positioning_overflow is not an int")
+    # positioning_overflow (not required from LLM — we compute it deterministically)
+    # LLM's value is ignored; validation skipped
 
     # themes (optional)
     themes = obj.get("themes", [])
@@ -514,6 +506,11 @@ def main() -> int:
         # ── All checks passed ───────────────────────────────────────────────
         log(f"preview narrative validated OK (attempt {attempt})")
 
+        # ── IMPR-076: Overwrite positioning with Python-deterministic values ────
+        # LLM's positioning is ignored; we recompute it deterministically
+        py_positioning, py_overflow = compute_preview_positioning(live_flags, cs_cards, PREVIEW_TOP_N)
+        log(f"positioning: Python {len(py_positioning)} items + {py_overflow} overflow (replacing LLM's {len(preview_obj.get('positioning', []))} + {preview_obj.get('positioning_overflow', 0)})")
+
         # ── Write output ────────────────────────────────────────────────────
         write_output(
             notes_root, monday_date, data_as_of,
@@ -523,8 +520,8 @@ def main() -> int:
                 "hero_oneliner": preview_obj.get("hero_oneliner"),
                 "calendar": preview_obj.get("calendar", []),
                 "macro_position": preview_obj.get("macro_position"),
-                "positioning": preview_obj.get("positioning", []),
-                "positioning_overflow": preview_obj.get("positioning_overflow", 0),
+                "positioning": py_positioning,
+                "positioning_overflow": py_overflow,
                 "themes": preview_obj.get("themes", []),
             }
         )
