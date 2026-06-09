@@ -40,7 +40,7 @@ from narrative_common import (
     extract_signals_excerpt,
     get_llm, write_output, check_forbidden_words,
     set_wall_clock, cancel_wall_clock,
-    _M7_TICKERS, SCHEMA_VERSION,
+    _M7_TICKERS, SCHEMA_VERSION, _FORBIDDEN_RE,
 )
 
 LOG = "[generate_narrative]"
