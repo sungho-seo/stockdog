@@ -5,6 +5,11 @@ echo "🐾 Setting up StockDog Cron Jobs for Ubuntu..."
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd $DIR
 
+# Wire the pre-commit hook for the undefined-name gate (F821/F822).
+# This is a local git config (not committed); re-run deploy.sh on a fresh server to restore it.
+git -C "$DIR" config core.hooksPath githooks
+echo "✅ git core.hooksPath set to githooks (pre-commit undefined-name gate active)."
+
 # ── Cron Job 1: Main Pipeline ─────────────────────────────────────────
 # 17:00 KST = 08:00 UTC — vault pull → pipeline → vault push
 CRON_MAIN="0 17 * * * cd $DIR && git -C $DIR/../../skyler pull >> $DIR/cron_stockdog.log 2>&1; /usr/bin/docker compose run --rm stockdog python main.py >> $DIR/cron_stockdog.log 2>&1 && bash $DIR/sync_vault.sh >> $DIR/cron_stockdog.log 2>&1"

@@ -54,6 +54,23 @@ def log(msg: str) -> None:
     print(f"{LOG_PREFIX} {msg}", flush=True)
 
 
+def alert_generation_failure(generator: str, run_date: str, error_class: str, detail: str = "") -> None:
+    """Telegram alert + greppable log marker on a REAL generation failure.
+    Call ONLY on post-gate errors (after get_llm()): LLM exception/timeout, empty output,
+    json_parse/schema_validation/forbidden_word after retries, write_failure, or last-resort except.
+    NEVER on legit gate skips (no report / idempotent / no-LLM-key / thin-week). Always swallows its own errors."""
+    marker = f"!!ALERT!! {generator} narrative generation FAILED for {run_date} ({error_class})"
+    log(marker + (f" — {detail}" if detail else ""))
+    try:
+        from utils.notifier import send_telegram_message
+        msg = f"⚠️ *{generator} narrative 실패*\n날짜: {run_date}\n원인: {error_class}"
+        if detail:
+            msg += f"\n{detail[:200]}"
+        send_telegram_message(msg)
+    except Exception as e:
+        log(f"alert_generation_failure: notify failed ({e}) — continuing")
+
+
 class _WallClockTimeout(Exception):
     """Wall-clock timeout exception."""
     pass
@@ -333,7 +350,8 @@ def write_output(notes_root: Path, run_date: str, data_as_of: str,
                  content_type: str = "daily",
                  m7_status: str = "skipped", m7_stories=None,
                  weekly_fields: dict = None,
-                 preview_fields: dict = None) -> None:
+                 preview_fields: dict = None,
+                 generator: str = "narrative") -> None:
     """Write narrative.json (always, even on skip/failure).
 
     Args:
@@ -400,6 +418,7 @@ def write_output(notes_root: Path, run_date: str, data_as_of: str,
                 log(f"failed to archive ({e})")
     except OSError as e:
         log(f"failed to write output ({e})")
+        alert_generation_failure(generator, run_date, "write_failure", str(e))
 
 
 # ---------------------------------------------------------------------------

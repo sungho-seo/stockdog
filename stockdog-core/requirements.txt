@@ -19,6 +19,9 @@ langchain==0.3.1
 langchain-google-genai==2.0.7
 langchain-anthropic==0.3.1
 
+# Static analysis — undefined-name gate (F821/F822) in Dockerfile + pre-commit hook
+pyflakes==3.4.0
+
 # X/Twitter Data Collection
 # We use 'requests' (defined above) to call GetXAPI
 

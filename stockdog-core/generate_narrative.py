@@ -40,6 +40,7 @@ from narrative_common import (
     extract_signals_excerpt,
     get_llm, write_output, check_forbidden_words,
     set_wall_clock, cancel_wall_clock,
+    alert_generation_failure,
     _M7_TICKERS, SCHEMA_VERSION, _FORBIDDEN_RE,
 )
 
@@ -518,18 +519,21 @@ def main() -> int:
             raw_text = (resp.content or "").strip()
         except _WallClockTimeout:
             log(f"LLM call exceeded {LLM_WALL_CLOCK_SECONDS}s (attempt {attempt}) — skip")
-            write_output(notes_root, run_date, data_as_of, "skipped", None, content_type="daily")
+            alert_generation_failure("daily", run_date, "llm_timeout", f"wall-clock {LLM_WALL_CLOCK_SECONDS}s exceeded attempt {attempt}")
+            write_output(notes_root, run_date, data_as_of, "skipped", None, content_type="daily", generator="daily")
             return 0
         except Exception as e:
             log(f"LLM call failed ({e}) (attempt {attempt}) — skip")
-            write_output(notes_root, run_date, data_as_of, "skipped", None, content_type="daily")
+            alert_generation_failure("daily", run_date, "llm_exception", str(e)[:120])
+            write_output(notes_root, run_date, data_as_of, "skipped", None, content_type="daily", generator="daily")
             return 0
         finally:
             cancel_wall_clock()
 
         if not raw_text:
             log(f"LLM returned empty text (attempt {attempt}) — skip")
-            write_output(notes_root, run_date, data_as_of, "skipped", None, content_type="daily")
+            alert_generation_failure("daily", run_date, "empty_output", f"attempt {attempt}")
+            write_output(notes_root, run_date, data_as_of, "skipped", None, content_type="daily", generator="daily")
             return 0
 
         # ── Parse JSON ─────────────────────────────────────────────────────
@@ -544,7 +548,8 @@ def main() -> int:
                 log("retrying LLM call...")
                 continue
             log("giving up after 2 attempts — skip")
-            write_output(notes_root, run_date, data_as_of, "skipped", None, content_type="daily")
+            alert_generation_failure("daily", run_date, "json_parse_fail", str(e)[:120])
+            write_output(notes_root, run_date, data_as_of, "skipped", None, content_type="daily", generator="daily")
             return 0
 
         # ── Schema validation ───────────────────────────────────────────────
@@ -555,7 +560,8 @@ def main() -> int:
                 log("retrying LLM call...")
                 continue
             log("giving up after 2 attempts — skip")
-            write_output(notes_root, run_date, data_as_of, "skipped", None, content_type="daily")
+            alert_generation_failure("daily", run_date, "schema_validation_fail", str(val_errors)[:120])
+            write_output(notes_root, run_date, data_as_of, "skipped", None, content_type="daily", generator="daily")
             return 0
 
         # ── Forbidden word scan ─────────────────────────────────────────────
@@ -566,7 +572,8 @@ def main() -> int:
                 log("retrying LLM call...")
                 continue
             log("giving up after 2 attempts — skip")
-            write_output(notes_root, run_date, data_as_of, "skipped", None, content_type="daily")
+            alert_generation_failure("daily", run_date, "forbidden_word_fail", str(fw_violations)[:120])
+            write_output(notes_root, run_date, data_as_of, "skipped", None, content_type="daily", generator="daily")
             return 0
 
         # ── All checks passed ───────────────────────────────────────────────
@@ -594,4 +601,11 @@ if __name__ == "__main__":
         sys.exit(main())
     except Exception as e:  # absolute last-resort guard — ALWAYS exit 0
         print(f"{LOG} unexpected error ({e}) — exit 0", flush=True)
+        try:
+            import sys as _sys
+            _argv = _sys.argv
+            _run_date = _argv[2] if len(_argv) >= 3 else "?"
+        except Exception:
+            _run_date = "?"
+        alert_generation_failure("daily", _run_date, "unexpected", str(e)[:120])
         sys.exit(0)
