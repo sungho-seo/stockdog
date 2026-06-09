@@ -4,24 +4,29 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-def send_telegram_message(message: str):
+def send_telegram_message(message: str, parse_mode: str = "Markdown"):
     """
     Sends a text message to Telegram using BOT_TOKEN and CHAT_ID from env.
+
+    parse_mode: "Markdown" (default, preserves existing caller behaviour) or
+                None / "" to send as plain text (no entity parsing — safe for
+                messages containing raw exception text or unbalanced underscores).
     """
     token = os.getenv("BOT_TOKEN")
     chat_id = os.getenv("CHAT_ID")
-    
+
     if not token or not chat_id:
         logger.warning("Telegram BOT_TOKEN or CHAT_ID not set. Skipping notification.")
         return
-    
+
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     payload = {
         "chat_id": chat_id,
         "text": message,
-        "parse_mode": "Markdown"
     }
-    
+    if parse_mode:
+        payload["parse_mode"] = parse_mode
+
     try:
         resp = requests.post(url, json=payload, timeout=10)
         resp.raise_for_status()

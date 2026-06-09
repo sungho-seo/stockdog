@@ -63,10 +63,10 @@ def alert_generation_failure(generator: str, run_date: str, error_class: str, de
     log(marker + (f" — {detail}" if detail else ""))
     try:
         from utils.notifier import send_telegram_message
-        msg = f"⚠️ *{generator} narrative 실패*\n날짜: {run_date}\n원인: {error_class}"
+        msg = f"⚠️ {generator} narrative 실패\n날짜: {run_date}\n원인: {error_class}"
         if detail:
             msg += f"\n{detail[:200]}"
-        send_telegram_message(msg)
+        send_telegram_message(msg, parse_mode=None)
     except Exception as e:
         log(f"alert_generation_failure: notify failed ({e}) — continuing")
 
