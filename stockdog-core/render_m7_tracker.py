@@ -445,6 +445,19 @@ def _parse_date(s):
         return None
 
 
+def _is_real_insider_txn(t) -> bool:
+    """True iff a transaction is a real open-market trade for DISPLAY purposes:
+    positive $ value AND not a mechanical action (TaxWithholding/Gift/Grant/Exercise).
+    Drops grant rows (value 0) and empty/parse-fail rows (value 0). Mirrors the
+    NETFLOW_EXCLUDE set used by net_flow. Does NOT affect net_flow/breach/cluster —
+    those are computed from in_window separately."""
+    try:
+        val = float(t.get("value_usd") or 0)
+    except (TypeError, ValueError):
+        val = 0.0
+    return val > 0 and t.get("action") not in NETFLOW_EXCLUDE
+
+
 def compute_insider_summary(history: list, asof: _date):
     """Per-ticker insider summary over the trailing window.
 
@@ -509,7 +522,7 @@ def compute_insider_summary(history: list, asof: _date):
         "net_flow": net_flow,
         "buy_usd": buy_usd,
         "sell_usd": sell_usd,
-        "window_txns": [t for _, t in in_window],
+        "window_txns": [t for _, t in in_window if _is_real_insider_txn(t)],
         "all_txns": txns,
         "breaches": breaches,
         "senior_breaches": senior_breaches,
