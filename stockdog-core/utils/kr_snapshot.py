@@ -30,8 +30,33 @@ when present, so it is absent on the P1 page.
 import json
 import logging
 import os
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
+
+
+def _flows_date_matches(flow_bizdate_iso, price_base_iso):
+    """True if a stock's flow bizdate is within 1 business day of its price
+    base_date — so we don't stitch mismatched-date 수급 onto a price.
+
+    Both args are ISO 'YYYY-MM-DD' (or falsy). Missing either → False
+    (conservative: drop the flows rather than risk a date mismatch). Falls back
+    to a calendar-day comparison if the business-day helper is unavailable.
+    """
+    if not flow_bizdate_iso or not price_base_iso:
+        return False
+    if flow_bizdate_iso == price_base_iso:
+        return True
+    try:
+        d1 = datetime.strptime(flow_bizdate_iso, "%Y-%m-%d").date()
+        d2 = datetime.strptime(price_base_iso, "%Y-%m-%d").date()
+    except (ValueError, TypeError):
+        return False
+    try:
+        from utils.kr_date import business_days_between
+        return business_days_between(d1, d2) <= 1
+    except Exception:
+        return abs((d1 - d2).days) <= 1
 
 
 def _yyyymmdd_to_iso(s):
@@ -108,6 +133,41 @@ def build_kr_snapshot(data, *, updated, data_date=None,
     # Sort by |change_pct| desc so the biggest movers lead (null-safe).
     movers.sort(key=lambda m: abs(m.get("change_pct") or 0), reverse=True)
 
+    # ---- K7 대형주 basket (P3-A) ----
+    # zip prices + flows BY CODE, in config order (the order get_kr_stock_data
+    # inserted them — Python dict preserves insertion order). NOT sorted by
+    # change%. Tolerant → [] when unavailable. data-date discipline: a stock's
+    # flow bizdate must be within 1 business day of its price base_date, else
+    # flows:null (don't stitch mismatched dates).
+    k7_prices = (data or {}).get("kr_k7_prices", {}) or {}
+    k7_flows = (data or {}).get("kr_k7_flows", {}) or {}
+    k7 = []
+    for code, pd in k7_prices.items():
+        if not pd:
+            continue
+        price_base_iso = _yyyymmdd_to_iso(pd.get("base_date") or "")
+        fl = k7_flows.get(code) or k7_flows.get(str(code))
+        flows_out = None
+        if fl:
+            if _flows_date_matches(fl.get("bizdate"), price_base_iso):
+                flows_out = {
+                    "individual": fl.get("individual"),
+                    "foreign": fl.get("foreign"),
+                    "institutional": fl.get("institutional"),
+                    "unit": "주",
+                    "foreign_ratio": fl.get("foreign_ratio"),
+                }
+        k7.append({
+            "code": code,
+            "name": pd.get("name"),
+            "close": pd.get("close"),
+            "prev_close": pd.get("prev_close"),
+            "change_pct": pd.get("change_pct"),
+            "volume": pd.get("volume"),
+            "market": pd.get("market"),
+            "flows": flows_out,
+        })
+
     narrative = None
     if hero or story:
         narrative = {"hero": hero, "story": story}
@@ -120,6 +180,9 @@ def build_kr_snapshot(data, *, updated, data_date=None,
         "movers": movers,
         "narrative": narrative,
         "report_slug": report_slug,
+        # P3-A (K7 대형주): per-stock price + 수급 direction (주). [] when
+        # unavailable; the emitter renders the block only when non-empty.
+        "k7": k7,
         # P2 (수급): the collected market-level investor flows dict
         # ({data_date, unit, market:{KOSPI,KOSDAQ}}) or None when unavailable.
         # The emitter renders the 투자자별 수급 hero only when this is present.

@@ -16,6 +16,7 @@ every failure path returns None / logs a warning and NEVER raises, so the KR
 pipeline is never aborted by this best-effort 4th key.
 """
 import logging
+import time
 
 import requests
 
@@ -23,6 +24,15 @@ logger = logging.getLogger(__name__)
 
 # Naver mobile finance trend endpoint. Market-level investor net-buy 거래대금.
 _TREND_URL = "https://m.stock.naver.com/api/index/{market}/trend"
+
+# Per-STOCK trend endpoint (K7 대형주 트래커). Returns a LIST of daily rows
+# (newest first); each row carries individualPureBuyQuant / foreignerPureBuyQuant
+# / organPureBuyQuant (signed comma-strings in 주 — SHARES, NOT 억원) plus
+# foreignerHoldRatio ("47.63%") and bizdate. Confirmed live against 005930.
+_STOCK_TREND_URL = "https://m.stock.naver.com/api/stock/{code}/trend"
+
+# Polite delay between the per-stock calls so we don't hammer Naver.
+_STOCK_DELAY_S = 0.4
 
 # Identifying browser-ish UA + Referer (Naver's mobile API expects these).
 _HEADERS = {
@@ -142,3 +152,119 @@ def fetch_market_investor_flows():
         "unit": "억원",
         "market": market_out,
     }
+
+
+# ---------------------------------------------------------------------------
+# Per-STOCK investor flows (K7 대형주 트래커). Net-buy direction per stock in
+# 주(SHARES) — NOT comparable across stocks (different price/float), so the
+# emitter renders DIRECTION arrows (sign), not magnitude bars. Separate unit
+# from the market-level hero (억원), kept distinct on purpose.
+# ---------------------------------------------------------------------------
+def _parse_signed_shares(s):
+    """'+2,880,306' / '-5,933,301' / '0' → int 주(shares). Bad input → None."""
+    if s is None:
+        return None
+    try:
+        cleaned = str(s).replace(",", "").replace("+", "").strip()
+        if cleaned in ("", "-"):
+            return None
+        return int(cleaned)
+    except (ValueError, TypeError):
+        return None
+
+
+def _parse_ratio_pct(s):
+    """'47.63%' → 47.63 (float). Bad/empty input → None."""
+    if s is None:
+        return None
+    try:
+        cleaned = str(s).replace("%", "").replace(",", "").strip()
+        if cleaned in ("", "-"):
+            return None
+        return float(cleaned)
+    except (ValueError, TypeError):
+        return None
+
+
+def _latest_stock_row(payload):
+    """Extract the newest per-stock trend row (dict with bizdate) from the
+    per-stock endpoint response. The endpoint returns a LIST newest-first; we
+    take the first row carrying a bizdate. Defensive for a dict-wrapped shape
+    too. None on miss.
+    """
+    if isinstance(payload, list):
+        for row in payload:
+            if isinstance(row, dict) and "bizdate" in row:
+                return row
+        return None
+    if isinstance(payload, dict):
+        if "bizdate" in payload:
+            return payload
+        for v in payload.values():
+            if isinstance(v, list):
+                for row in v:
+                    if isinstance(row, dict) and "bizdate" in row:
+                        return row
+    return None
+
+
+def _fetch_one_stock_flow(code):
+    """Fetch one stock's latest investor flows. Returns a dict
+    {individual, foreign, institutional, foreign_ratio, bizdate} or None on any
+    failure — NEVER raises. bizdate is ISO ('YYYY-MM-DD') or None.
+    """
+    url = _STOCK_TREND_URL.format(code=code)
+    try:
+        resp = requests.get(url, headers=_HEADERS, timeout=_TIMEOUT)
+        resp.raise_for_status()
+        row = _latest_stock_row(resp.json())
+        if not row:
+            logger.warning(f"kr_investor_flow stock {code}: no trend row in response")
+            return None
+        flows = {
+            "individual": _parse_signed_shares(row.get("individualPureBuyQuant")),
+            "foreign": _parse_signed_shares(row.get("foreignerPureBuyQuant")),
+            "institutional": _parse_signed_shares(row.get("organPureBuyQuant")),
+            "foreign_ratio": _parse_ratio_pct(row.get("foreignerHoldRatio")),
+            "bizdate": _yyyymmdd_to_iso(row.get("bizdate")),
+        }
+        # If all three net-buy buckets are unparseable, this row is useless.
+        if all(
+            flows[k] is None for k in ("individual", "foreign", "institutional")
+        ):
+            logger.warning(f"kr_investor_flow stock {code}: all net-buy values unparseable")
+            return None
+        return flows
+    except Exception as e:
+        logger.warning(f"kr_investor_flow stock {code} fetch failed, ignoring: {e}")
+        return None
+
+
+def fetch_stock_investor_flows(codes):
+    """Per-stock investor flows for the K7 대형주 basket.
+
+    codes: iterable of 6-digit 종목코드 strings.
+
+    Returns:
+        {
+          "005930": {"individual": -5933301, "foreign": 2880306,
+                     "institutional": 3295009, "foreign_ratio": 47.63,
+                     "bizdate": "2026-06-12"},
+          ...
+        }
+      — values in 주(SHARES). A code that fails is OMITTED (partial dict);
+      returns {} when every code fails (nothing useful). NEVER raises.
+
+    A small polite delay separates the per-stock calls.
+    """
+    out = {}
+    codes = list(codes or [])
+    for i, code in enumerate(codes):
+        flow = _fetch_one_stock_flow(code)
+        if flow is not None:
+            out[str(code)] = flow
+        if i < len(codes) - 1:
+            time.sleep(_STOCK_DELAY_S)
+    if not out:
+        logger.warning("kr_investor_flow: no per-stock flows collected, returning {}")
+    return out

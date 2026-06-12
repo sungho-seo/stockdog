@@ -12,6 +12,20 @@ obsidian:
   base_dir: "/notes/raw/stockdog/daily-market"
   date_format: "%Y-%m-%d"
 
+# KR market page (국장/KR garden) config.
+# k7: the 대형주 basket (시총 상위 7, curated/static) rendered as a 7-card grid
+# on /kr. NOT "실시간 시총 상위" — a named, hand-maintained basket. Order is
+# preserved as-is in the snapshot (NOT sorted by change%).
+kr:
+  k7:
+    - { code: "005930", name: "삼성전자" }
+    - { code: "000660", name: "SK하이닉스" }
+    - { code: "373220", name: "LG에너지솔루션" }
+    - { code: "207940", name: "삼성바이오로직스" }
+    - { code: "005380", name: "현대차" }
+    - { code: "000270", name: "기아" }
+    - { code: "068270", name: "셀트리온" }
+
 # Twitter influencer scraping (GetXAPI)
 # Set enabled: false to skip get_influencer_tweets() entirely.
 # Pipeline will still produce reports without twitter signal.

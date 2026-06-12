@@ -5,7 +5,10 @@ from datetime import date, datetime, timedelta, timezone
 from pipelines.base import MarketPipeline
 from collectors.kr_stocks import get_kr_stock_data
 from collectors.kr_indices import get_kr_index_data
-from collectors.kr_investor_flow import fetch_market_investor_flows
+from collectors.kr_investor_flow import (
+    fetch_market_investor_flows,
+    fetch_stock_investor_flows,
+)
 from collectors.exchange_rates import get_exchange_rates
 from analysis.llm_analyzer import analyze_kr_market, build_report_header
 from utils.markdown_generator import save_report
@@ -90,19 +93,42 @@ class KRPipeline(MarketPipeline):
             types=('INDEX_KR',)
         )
 
+        # K7 대형주 basket (curated/static, config-driven). Mapped to the
+        # get_kr_stock_data item shape ({ticker, name, type}). Order preserved.
+        # Best-effort: a missing/malformed config.kr.k7 degrades to []; the
+        # snapshot then ships k7:[] and the emitter hides the block.
+        k7_cfg = ((self.config.get('kr', {}) or {}).get('k7', []) or [])
+        k7_items = [
+            {'ticker': str(e.get('code')), 'name': e.get('name'),
+             'type': 'STOCK_KR'}
+            for e in k7_cfg
+            if isinstance(e, dict) and e.get('code')
+        ]
+        k7_codes = [it['ticker'] for it in k7_items]
+
         if self.sample:
             kr_stock_items = kr_stock_items[:1]
             kr_index_items = kr_index_items[:1]
+            k7_items = k7_items[:1]
+            k7_codes = k7_codes[:1]
             print(f"[SAMPLE] kr_stocks={[i['ticker'] for i in kr_stock_items]}")
 
         # investor_flows is a best-effort 4th key (P2 of the 국장/KR page).
         # fetch_market_investor_flows() is fully tolerant (returns None, never
         # raises) so it can NEVER abort the pipeline.
+        #
+        # kr_k7_prices / kr_k7_flows (K7 대형주 트래커, P3-A) are ALSO best-effort:
+        # get_kr_stock_data returns {} on failure (per-stock keyed) and
+        # fetch_stock_investor_flows returns {} and never raises — neither can
+        # abort the pipeline. They reuse the SAME free external sources already
+        # in use (data.go.kr prices + Naver per-ticker trend).
         return {
             'kr_stocks': get_kr_stock_data(kr_stock_items),
             'kr_indices': get_kr_index_data(kr_index_items),
             'exchange': get_exchange_rates(),
             'investor_flows': fetch_market_investor_flows(),
+            'kr_k7_prices': get_kr_stock_data(k7_items) if k7_items else {},
+            'kr_k7_flows': fetch_stock_investor_flows(k7_codes) if k7_codes else {},
         }
 
     def _compute_freshness(self, data_as_of: str | None) -> tuple[str | None, int | None]:
