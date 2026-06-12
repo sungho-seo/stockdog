@@ -60,6 +60,8 @@ def build_kr_snapshot(data, *, updated, data_date=None,
     indices_in = (data or {}).get("kr_indices", {}) or {}
     stocks_in = (data or {}).get("kr_stocks", {}) or {}
     exchange_in = (data or {}).get("exchange", {}) or {}
+    # P2 (수급): best-effort dict from collectors.kr_investor_flow (or None).
+    flows_in = (data or {}).get("investor_flows")
 
     # ---- indices (KOSPI / KOSDAQ) ----
     indices = {}
@@ -118,7 +120,10 @@ def build_kr_snapshot(data, *, updated, data_date=None,
         "movers": movers,
         "narrative": narrative,
         "report_slug": report_slug,
-        "investor_flows": None,   # P2 (수급) — null in P1 → emitter hides hero
+        # P2 (수급): the collected market-level investor flows dict
+        # ({data_date, unit, market:{KOSPI,KOSDAQ}}) or None when unavailable.
+        # The emitter renders the 투자자별 수급 hero only when this is present.
+        "investor_flows": flows_in if isinstance(flows_in, dict) else None,
     }
 
 

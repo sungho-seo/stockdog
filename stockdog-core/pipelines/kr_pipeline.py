@@ -5,6 +5,7 @@ from datetime import date, datetime, timedelta, timezone
 from pipelines.base import MarketPipeline
 from collectors.kr_stocks import get_kr_stock_data
 from collectors.kr_indices import get_kr_index_data
+from collectors.kr_investor_flow import fetch_market_investor_flows
 from collectors.exchange_rates import get_exchange_rates
 from analysis.llm_analyzer import analyze_kr_market, build_report_header
 from utils.markdown_generator import save_report
@@ -94,10 +95,14 @@ class KRPipeline(MarketPipeline):
             kr_index_items = kr_index_items[:1]
             print(f"[SAMPLE] kr_stocks={[i['ticker'] for i in kr_stock_items]}")
 
+        # investor_flows is a best-effort 4th key (P2 of the 국장/KR page).
+        # fetch_market_investor_flows() is fully tolerant (returns None, never
+        # raises) so it can NEVER abort the pipeline.
         return {
             'kr_stocks': get_kr_stock_data(kr_stock_items),
             'kr_indices': get_kr_index_data(kr_index_items),
             'exchange': get_exchange_rates(),
+            'investor_flows': fetch_market_investor_flows(),
         }
 
     def _compute_freshness(self, data_as_of: str | None) -> tuple[str | None, int | None]:
