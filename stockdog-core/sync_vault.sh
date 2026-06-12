@@ -16,6 +16,26 @@ send_telegram() {
         -d "parse_mode=Markdown" > /dev/null
 }
 
+# 주요 일정 (this-week calendar chips) — stage raw/stockdog/calendar/this_week.json
+# host-side (preferred wiring, NO docker rebuild). Mirrors publish_m7_tracker /
+# publish_macro_tracker: a stdlib+requests host python3 entrypoint writes the
+# JSON atomically; we git add the calendar dir. FRED_API_KEY comes from the
+# ../.env already sourced at the top of this script. Tolerant: the staging fn
+# never raises and writes an `error` field on FRED failure (chips degrade to
+# "events: []" → header collapses). Always Mon–Fri of the CURRENT week
+# (time-machine static — by design).
+stage_calendar() {
+    # The module lives in $DIR (stockdog-core); `python3 -m collectors...`
+    # needs that as CWD. Run it in a SUBSHELL so the outer CWD ($VAULT_DIR,
+    # needed for the git add + later commit) is preserved. Pass an ABSOLUTE
+    # vault root so the staging fn writes to the right tree regardless of CWD.
+    if ( cd "$DIR" && python3 -m collectors.economic_calendar --stage "$VAULT_DIR" ); then
+        git add "raw/stockdog/calendar/"
+    else
+        echo "[sync_vault.sh] stage_calendar: staging failed — skip (calendar unchanged)"
+    fi
+}
+
 # IMPR-058 Step 1 — publish today's daily-market reports to the public Garden tree.
 # Forward-only: processes ONLY $DATE (today). raw/ is read-only — we copy OUT.
 # Layout owned by vault-web build: [2c] flattens 10_Public/daily-reports/ → /daily-reports/,
@@ -237,6 +257,11 @@ git add "raw/stockdog/macro/" 2>/dev/null || true
 # US pipeline's save_watchlist_day / stage_watchlist_snapshot). Missing dir is
 # harmless. raw/ stays read-only; only the watchlist store lives here.
 git add "raw/stockdog/watchlist/" 2>/dev/null || true
+
+# 주요 일정 — stage the this-week calendar JSON (after the raw git adds, before
+# the garden publish). Host-side staging, no docker rebuild. The dashboard.json
+# build (vault-web build_all.sh post-hook) reads this file into payload.calendar.
+stage_calendar
 
 # IMPR-058 Step 1 — publish today's reports to the public Garden tree and stage
 # the copies so they ride in the same daily commit. Must run AFTER the raw `git add`
