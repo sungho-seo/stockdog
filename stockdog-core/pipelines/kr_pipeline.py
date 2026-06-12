@@ -1,3 +1,4 @@
+import os
 from collections import Counter
 from datetime import date, datetime, timedelta, timezone
 
@@ -10,6 +11,15 @@ from utils.markdown_generator import save_report
 from utils.vault_reader import read_watchlist_items
 from utils.notifier import send_telegram_message
 from utils.kr_date import business_days_between
+from utils.kr_snapshot import build_kr_snapshot, write_kr_snapshot
+
+
+# KR public-garden snapshot dump target (P1 of the 국장/KR page).
+# Mirrors raw/stockdog/macro/macro_snapshot.json convention.
+KR_SNAPSHOT_PATH = os.path.join(
+    os.path.expanduser("~"), "service", "skyler", "raw", "stockdog", "kr",
+    "kr_snapshot.json",
+)
 
 
 def _yyyymmdd_to_iso(s: str) -> str:
@@ -139,6 +149,50 @@ class KRPipeline(MarketPipeline):
 
         save_report(final_report, self.config, region="KR", status=status,
                     data_as_of=data_as_of, data_freshness=data_freshness)
+
+        # KR public-garden snapshot dump (P1 of the 국장/KR page). Built from the
+        # dicts we ALREADY collected — no new collector, no extra external API.
+        # Tolerant: never aborts the pipeline (build_kr_snapshot/write are
+        # exception-safe; we wrap once more for total safety).
+        try:
+            meta = getattr(self, "_last_meta", {}) or {}
+            report_date = meta.get("report_date")
+            report_slug = (f"/daily-reports/{report_date}-kr"
+                           if report_date else None)
+            snap = build_kr_snapshot(
+                data,
+                updated=report_date or (
+                    datetime.now(timezone.utc) + timedelta(hours=9)
+                ).date().isoformat(),
+                data_date=data_as_of,
+                report_slug=report_slug,
+                hero=self._kr_hero_oneliner(data),
+                story=None,   # full story lives in the linked report (P1)
+            )
+            write_kr_snapshot(KR_SNAPSHOT_PATH, snap)
+        except Exception as e:
+            # Snapshot dump is best-effort — log and continue.
+            print(f"[KRPipeline] kr_snapshot dump skipped: {e}")
+
+    @staticmethod
+    def _kr_hero_oneliner(data):
+        """Deterministic KR hero one-liner from KOSPI/KOSDAQ change (no LLM).
+
+        e.g. "코스피 +0.43%·코스닥 +4.76% 동반 상승". Null-safe → None when
+        neither index is available (emitter then falls back to a default tagline).
+        """
+        idx = (data or {}).get("kr_indices", {}) or {}
+        parts = []
+        for key, label in (("KOSPI", "코스피"), ("KOSDAQ", "코스닥")):
+            d = idx.get(key) or {}
+            cp = d.get("change_pct")
+            if cp is None:
+                continue
+            sign = "+" if cp > 0 else ""
+            parts.append(f"{label} {sign}{cp:.2f}%")
+        if not parts:
+            return None
+        return "·".join(parts)
 
     def notify(self, data: dict, report: str) -> None:
         if self._last_status == "failed":
