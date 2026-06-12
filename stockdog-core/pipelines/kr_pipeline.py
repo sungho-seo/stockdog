@@ -19,7 +19,10 @@ from collectors.kr_naver_quote import (
 from collectors.kr_investor_flow import (
     fetch_market_investor_flows,
     fetch_stock_investor_flows,
+    fetch_foreign_streaks,
 )
+from collectors.kr_breadth import fetch_market_breadth
+from collectors.kr_index_history import fetch_index_history
 from collectors.exchange_rates import get_exchange_rates
 from analysis.llm_analyzer import analyze_kr_market, build_report_header
 from utils.markdown_generator import save_report
@@ -140,6 +143,11 @@ class KRPipeline(MarketPipeline):
         # fetch_stock_investor_flows returns {} and never raises — neither can
         # abort the pipeline. They reuse the SAME free external sources already
         # in use (data.go.kr prices + Naver per-ticker trend).
+        # Phase A/B (등락 종목수 breadth + 지수 30일 추세 + 종목 외국인 연속).
+        # All three are best-effort, tolerant (return None/{}/never raise) so
+        # none can abort the pipeline. They reuse the SAME free Naver hosts
+        # already in use. The 투심 게이지(Phase B) is computed downstream in
+        # utils/kr_snapshot.py from breadth + investor_flows (no extra fetch).
         return {
             'kr_stocks': get_kr_stock_data(kr_stock_items),
             'kr_indices': get_kr_index_data(kr_index_items),
@@ -147,6 +155,9 @@ class KRPipeline(MarketPipeline):
             'investor_flows': fetch_market_investor_flows(),
             'kr_k7_prices': get_kr_stock_data(k7_items) if k7_items else {},
             'kr_k7_flows': fetch_stock_investor_flows(k7_codes) if k7_codes else {},
+            'kr_breadth': fetch_market_breadth(),
+            'kr_index_history': fetch_index_history(),
+            'kr_k7_foreign_streaks': fetch_foreign_streaks(k7_codes) if k7_codes else {},
         }
 
     def _compute_freshness(self, data_as_of: str | None) -> tuple[str | None, int | None]:

@@ -268,3 +268,94 @@ def fetch_stock_investor_flows(codes):
     if not out:
         logger.warning("kr_investor_flow: no per-stock flows collected, returning {}")
     return out
+
+
+# ---------------------------------------------------------------------------
+# 종목단위 외국인 연속 (Phase A2). "외국인 N일 연속 순매수/순매도" — the run of
+# consecutive trading days, counted from the MOST RECENT day backward, over
+# which a single stock's daily foreign net-buy kept the SAME sign. Uses the
+# per-stock /trend 10-day history (foreignerPureBuyQuant signed). A flat (0)
+# or unparseable day breaks the run. Direction "buy"(+) / "sell"(−).
+# ---------------------------------------------------------------------------
+def _stock_trend_rows(payload):
+    """All per-stock /trend rows NEWEST-FIRST (list of dicts w/ bizdate). []."""
+    if isinstance(payload, list):
+        return [r for r in payload if isinstance(r, dict) and "bizdate" in r]
+    if isinstance(payload, dict):
+        if "bizdate" in payload:
+            return [payload]
+        for v in payload.values():
+            if isinstance(v, list):
+                rows = [r for r in v if isinstance(r, dict) and "bizdate" in r]
+                if rows:
+                    return rows
+    return []
+
+
+def _streak_from_quants(quants):
+    """quants: foreign net-buy ints NEWEST-FIRST (None allowed).
+
+    → {"streak_days": int, "direction": "buy"|"sell"|None}. The run is the
+    number of leading entries sharing the sign of the newest non-None entry;
+    a sign flip, a zero, or a None terminates it. All-None/empty → days 0,
+    direction None.
+    """
+    direction = None
+    days = 0
+    for q in quants:
+        if q is None or q == 0:
+            break
+        sign = "buy" if q > 0 else "sell"
+        if direction is None:
+            direction = sign
+            days = 1
+        elif sign == direction:
+            days += 1
+        else:
+            break
+    return {"streak_days": days, "direction": direction}
+
+
+def compute_foreign_streak(code):
+    """외국인 연속 순매수/순매도 streak for one stock (Phase A2).
+
+    Fetches the per-stock /trend 10-day history and computes the consecutive-
+    same-direction foreign net-buy run from the most recent day backward.
+
+    Returns {"streak_days": int, "direction": "buy"|"sell"|None} — days 0 /
+    direction None when no usable data (fetch fail / all flat). NEVER raises.
+    """
+    url = _STOCK_TREND_URL.format(code=code)
+    try:
+        resp = requests.get(url, headers=_HEADERS, timeout=_TIMEOUT)
+        resp.raise_for_status()
+        rows = _stock_trend_rows(resp.json())
+        if not rows:
+            logger.warning(f"kr_investor_flow streak {code}: no trend rows")
+            return {"streak_days": 0, "direction": None}
+        quants = [_parse_signed_shares(r.get("foreignerPureBuyQuant")) for r in rows]
+        return _streak_from_quants(quants)
+    except Exception as e:
+        logger.warning(f"kr_investor_flow streak {code} failed, ignoring: {e}")
+        return {"streak_days": 0, "direction": None}
+
+
+def fetch_foreign_streaks(codes):
+    """Per-stock foreign 연속 streak for the K7 basket.
+
+    codes: iterable of 6-digit 종목코드 strings.
+
+    Returns {code: {"streak_days": int, "direction": "buy"|"sell"|None}, ...}.
+    A code that yields no usable history is OMITTED (partial dict); {} when all
+    fail. A small polite delay separates the per-stock calls. NEVER raises.
+    """
+    out = {}
+    codes = list(codes or [])
+    for i, code in enumerate(codes):
+        st = compute_foreign_streak(code)
+        # Keep only meaningful streaks (≥1 day w/ a direction); drop empties.
+        if st and st.get("streak_days") and st.get("direction"):
+            out[str(code)] = st
+        if i < len(codes) - 1:
+            time.sleep(_STOCK_DELAY_S)
+    return out

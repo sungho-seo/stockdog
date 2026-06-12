@@ -29,10 +29,152 @@ when present, so it is absent on the P1 page.
 """
 import json
 import logging
+import math
 import os
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# 투심 게이지 (Phase B). An HONEST sentiment PROXY — NOT the CNN F&G index.
+# score = round(mean of 3 equal-weight 0-100 sub-scores):
+#   1) 수급(su_geup): market 외국인+기관 net-buy (억원, KOSPI+KOSDAQ summed),
+#      tanh-normalized → 0-100. 0 net = 50 (neutral); strong inflow → ~100,
+#      strong outflow → ~0. Scale picked so a "big" day (~±3조 = ±30,000억)
+#      lands near the rails without saturating on ordinary days.
+#   2) breadth: 상승/(상승+하락) × 100 across KOSPI+KOSDAQ combined.
+#   3) tilt(등락비): 상한/(상한+하한+1) mapped to 0-100. With few 상/하한 this
+#      sits near the neutral 50; a 상한-skew lifts it, 하한-skew sinks it.
+# NO decimals (prior decision). Sub-scores stored for the honest breakdown.
+# ---------------------------------------------------------------------------
+_SUGEUP_SCALE_EOK = 15000.0   # tanh half-saturation point (억원), ~1.5조
+
+
+def _clamp01_100(x):
+    """Clamp to [0,100] int."""
+    try:
+        return int(max(0, min(100, round(x))))
+    except (ValueError, TypeError):
+        return None
+
+
+def _sugeup_subscore(investor_flows):
+    """수급 sub-score 0-100 from market 외국인+기관 net-buy (억원).
+
+    Sums foreign+institutional across KOSPI & KOSDAQ, tanh-normalizes around 0
+    → 50 (neutral), inflow → >50, outflow → <50. None when no flows.
+    """
+    if not isinstance(investor_flows, dict):
+        return None
+    market = investor_flows.get("market")
+    if not isinstance(market, dict):
+        return None
+    net = 0.0
+    seen = False
+    for mk in market.values():
+        if not isinstance(mk, dict):
+            continue
+        for key in ("foreign", "institutional"):
+            v = mk.get(key)
+            if isinstance(v, (int, float)):
+                net += v
+                seen = True
+    if not seen:
+        return None
+    return _clamp01_100(50.0 + 50.0 * math.tanh(net / _SUGEUP_SCALE_EOK))
+
+
+def _breadth_subscore(breadth):
+    """breadth sub-score = 상승/(상승+하락) × 100 across KOSPI+KOSDAQ. None on miss."""
+    if not isinstance(breadth, dict):
+        return None
+    up = down = 0
+    seen = False
+    for mk in breadth.values():
+        if not isinstance(mk, dict):
+            continue
+        u, d = mk.get("up"), mk.get("down")
+        if isinstance(u, (int, float)):
+            up += u
+            seen = True
+        if isinstance(d, (int, float)):
+            down += d
+            seen = True
+    if not seen:
+        return None
+    denom = up + down
+    if denom <= 0:
+        return 50
+    return _clamp01_100(up / denom * 100.0)
+
+
+def _tilt_subscore(breadth):
+    """등락비 sub-score from 상한/하한 across both markets.
+
+    limit_up/(limit_up+limit_down+1) → 0..1, mapped so balanced/none → ~50,
+    상한-skew → up, 하한-skew → down. None when breadth absent.
+    """
+    if not isinstance(breadth, dict):
+        return None
+    lu = ld = 0
+    seen = False
+    for mk in breadth.values():
+        if not isinstance(mk, dict):
+            continue
+        u, d = mk.get("limit_up"), mk.get("limit_down")
+        if isinstance(u, (int, float)):
+            lu += u
+            seen = True
+        if isinstance(d, (int, float)):
+            ld += d
+            seen = True
+    if not seen:
+        return None
+    # Symmetric ratio centered at 50: (lu - ld)/(lu + ld + 1) ∈ (−1,1) → 0..100.
+    return _clamp01_100(50.0 + 50.0 * ((lu - ld) / (lu + ld + 1.0)))
+
+
+def _gauge_label(score):
+    """score 0-100 → honest 5-band Korean label."""
+    if score is None:
+        return None
+    if score >= 75:
+        return "강한 매수 우위"
+    if score >= 60:
+        return "매수 우위"
+    if score > 40:
+        return "중립"
+    if score > 25:
+        return "매도 우위"
+    return "강한 매도 우위"
+
+
+def build_sentiment_gauge(investor_flows, breadth):
+    """KR 투심 게이지 (Phase B). Returns:
+        {"score": int 0-100, "label": str,
+         "breakdown": {"su_geup": int|None, "breadth": int|None, "tilt": int|None}}
+      or None when NONE of the 3 sub-scores can be computed.
+
+    score = round(mean of the AVAILABLE sub-scores, equal weight). Storing the
+    3 breakdown values keeps the gauge explainable (no black box). NEVER raises.
+    """
+    try:
+        su = _sugeup_subscore(investor_flows)
+        br = _breadth_subscore(breadth)
+        ti = _tilt_subscore(breadth)
+        present = [v for v in (su, br, ti) if v is not None]
+        if not present:
+            return None
+        score = _clamp01_100(sum(present) / len(present))
+        return {
+            "score": score,
+            "label": _gauge_label(score),
+            "breakdown": {"su_geup": su, "breadth": br, "tilt": ti},
+        }
+    except Exception as e:
+        logger.warning(f"build_sentiment_gauge failed, ignoring: {e}")
+        return None
 
 
 def _flows_date_matches(flow_bizdate_iso, price_base_iso):
@@ -141,6 +283,8 @@ def build_kr_snapshot(data, *, updated, data_date=None,
     # flows:null (don't stitch mismatched dates).
     k7_prices = (data or {}).get("kr_k7_prices", {}) or {}
     k7_flows = (data or {}).get("kr_k7_flows", {}) or {}
+    # Phase A2: per-stock 외국인 연속 streak ({code: {streak_days, direction}}).
+    k7_streaks = (data or {}).get("kr_k7_foreign_streaks", {}) or {}
     k7 = []
     for code, pd in k7_prices.items():
         if not pd:
@@ -150,12 +294,21 @@ def build_kr_snapshot(data, *, updated, data_date=None,
         flows_out = None
         if fl:
             if _flows_date_matches(fl.get("bizdate"), price_base_iso):
+                # Phase A2: ride the 외국인 연속 streak alongside the flows.
+                st = k7_streaks.get(code) or k7_streaks.get(str(code))
+                foreign_streak = None
+                if isinstance(st, dict) and st.get("streak_days") and st.get("direction"):
+                    foreign_streak = {
+                        "streak_days": st.get("streak_days"),
+                        "direction": st.get("direction"),
+                    }
                 flows_out = {
                     "individual": fl.get("individual"),
                     "foreign": fl.get("foreign"),
                     "institutional": fl.get("institutional"),
                     "unit": "주",
                     "foreign_ratio": fl.get("foreign_ratio"),
+                    "foreign_streak": foreign_streak,
                 }
         k7.append({
             "code": code,
@@ -172,6 +325,15 @@ def build_kr_snapshot(data, *, updated, data_date=None,
     if hero or story:
         narrative = {"hero": hero, "story": story}
 
+    # ---- Phase A1 (등락 종목수) / A3 (지수 30일 추세) passthrough ----
+    breadth_in = (data or {}).get("kr_breadth")
+    breadth = breadth_in if isinstance(breadth_in, dict) else None
+    index_history_in = (data or {}).get("kr_index_history")
+    index_history = index_history_in if isinstance(index_history_in, dict) else None
+
+    # ---- Phase B (투심 게이지) — computed in Python here (testable) ----
+    sentiment_gauge = build_sentiment_gauge(flows_in, breadth)
+
     return {
         "updated": updated,
         "data_date": data_date,
@@ -180,6 +342,14 @@ def build_kr_snapshot(data, *, updated, data_date=None,
         "movers": movers,
         "narrative": narrative,
         "report_slug": report_slug,
+        # Phase A1 (등락 종목수): {KOSPI:{up,flat,down,limit_up,limit_down}, ...}
+        # or None. The emitter renders the breadth card only when present.
+        "breadth": breadth,
+        # Phase A3 (지수 30일 추세): {KOSPI:{closes:[...],count}, ...} or None.
+        "index_history": index_history,
+        # Phase B (투심 게이지): {score,label,breakdown:{su_geup,breadth,tilt}}
+        # or None. HONEST proxy (수급+breadth+등락비), NOT CNN F&G.
+        "sentiment_gauge": sentiment_gauge,
         # P3-A (K7 대형주): per-stock price + 수급 direction (주). [] when
         # unavailable; the emitter renders the block only when non-empty.
         "k7": k7,
