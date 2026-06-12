@@ -42,9 +42,12 @@ Endpoints (FREE, no auth, confirmed live 2026-06-12):
                 (UNSIGNED % vs PREV-DAY close), compareToPreviousClosePrice
                 (UNSIGNED magnitude vs prev-day close), localTradedAt
                 ("...T20:00:00+09:00"), overMarketStatus ("CLOSE" after 20:00)}.
-            GET .../{code}/integration → totalInfos 거래량 (KRX-session shares) +
-                전일 (prev_close) + market. NOTE volume is the KRX-session figure;
-                it does NOT include after-hours NXT volume.
+            GET .../{code}/integration → totalInfos 거래량 + 전일 (prev_close) +
+                market. NOTE: /integration 거래량 is the **NXT-inclusive (KRX+NXT
+                consolidated)** day total — verified empirically (it equals the
+                KRX-only /trend volume on non-NXT days but ~2x on NXT-active days,
+                e.g. 삼성전자 06-12 = 60.07M consolidated vs 30.72M KRX-only).
+                Do NOT "correct" this to /trend — that would DROP NXT volume.
 
 Direction code (Naver convention) decides the SIGN of the unsigned
 fluctuationsRatio / compareToPreviousClosePrice:
