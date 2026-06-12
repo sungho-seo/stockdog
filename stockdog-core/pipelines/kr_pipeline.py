@@ -3,8 +3,19 @@ from collections import Counter
 from datetime import date, datetime, timedelta, timezone
 
 from pipelines.base import MarketPipeline
-from collectors.kr_stocks import get_kr_stock_data
-from collectors.kr_indices import get_kr_index_data
+# AUTHORITATIVE KR price/index source = Naver (same-day T-0, NXT-inclusive).
+# data.go.kr 주식시세/지수 is T+1 published — it never returns same-day data, so
+# it silently fell back to T-1 and mislabeled it "fresh" (the /kr page showed
+# YESTERDAY's prices). Naver gives the T-0 close, the SAME source K7 수급/외인%
+# already use. The data.go.kr collectors remain importable as a secondary
+# fallback but are NO LONGER wired in (see collect()).
+from collectors.kr_naver_quote import (
+    get_kr_stock_data_naver as get_kr_stock_data,
+    get_kr_index_data_naver as get_kr_index_data,
+)
+# Secondary/legacy data.go.kr collectors (T+1) — kept for reference/fallback only.
+# from collectors.kr_stocks import get_kr_stock_data as get_kr_stock_data_datago
+# from collectors.kr_indices import get_kr_index_data as get_kr_index_data_datago
 from collectors.kr_investor_flow import (
     fetch_market_investor_flows,
     fetch_stock_investor_flows,
@@ -19,11 +30,18 @@ from utils.kr_snapshot import build_kr_snapshot, write_kr_snapshot
 
 
 # KR public-garden snapshot dump target (P1 of the 국장/KR page).
-# Mirrors raw/stockdog/macro/macro_snapshot.json convention.
-KR_SNAPSHOT_PATH = os.path.join(
-    os.path.expanduser("~"), "service", "skyler", "raw", "stockdog", "kr",
-    "kr_snapshot.json",
-)
+# Mirrors the US pipeline convention (derive from config.obsidian.base_dir =
+# the MOUNTED vault path /notes/...), NOT os.path.expanduser("~"). The old `~`
+# path resolved to the CONTAINER home (/root/...) under the docker cron, so the
+# snapshot was written to throwaway container storage and NEVER reached the host
+# vault — only the host-run seed script (where ~=/home/ubuntu) ever updated it.
+# We now derive it from base_dir so the docker cron run repopulates kr.json.
+def _kr_snapshot_path(config: dict) -> str:
+    base_dir = (config.get("obsidian", {}) or {}).get(
+        "base_dir", "/notes/raw/stockdog/daily-market"
+    )
+    # base_dir = .../raw/stockdog/daily-market → sibling .../raw/stockdog/kr/
+    return os.path.join(os.path.dirname(base_dir), "kr", "kr_snapshot.json")
 
 
 def _yyyymmdd_to_iso(s: str) -> str:
@@ -132,14 +150,22 @@ class KRPipeline(MarketPipeline):
         }
 
     def _compute_freshness(self, data_as_of: str | None) -> tuple[str | None, int | None]:
-        """data_as_of(ISO) → ('fresh'|'stale'|None, business_days). 파싱 실패/None 시 (None, None)."""
+        """data_as_of(ISO) → ('fresh'|'stale'|None, business_days). 파싱 실패/None 시 (None, None).
+
+        Naver is a same-day (T-0) source — a correct run stamps TODAY's trading
+        date, so fresh ⇔ bdays == 0. The OLD rule (`bdays <= 1`) was a data.go.kr
+        T+1 workaround that SWALLOWED the staleness (T-1 data labeled "fresh").
+        With the Naver switch we tighten it: any non-today bizdate (weekend /
+        holiday / stale fetch) is surfaced HONESTLY as 'stale' so the save()
+        stale-callout ("N영업일 전 데이터") fires instead of pretending it is fresh.
+        """
         if not data_as_of:
             return None, None
         try:
             data_date = datetime.strptime(data_as_of, "%Y-%m-%d").date()
             kst_today = (datetime.now(timezone.utc) + timedelta(hours=9)).date()
             bdays = business_days_between(kst_today, data_date)
-            return ("fresh" if bdays <= 1 else "stale"), bdays
+            return ("fresh" if bdays == 0 else "stale"), bdays
         except ValueError:
             return None, None
 
@@ -200,7 +226,7 @@ class KRPipeline(MarketPipeline):
                 hero=self._kr_hero_oneliner(data),
                 story=None,   # full story lives in the linked report (P1)
             )
-            write_kr_snapshot(KR_SNAPSHOT_PATH, snap)
+            write_kr_snapshot(_kr_snapshot_path(self.config), snap)
         except Exception as e:
             # Snapshot dump is best-effort — log and continue.
             print(f"[KRPipeline] kr_snapshot dump skipped: {e}")
