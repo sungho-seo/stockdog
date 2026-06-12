@@ -26,8 +26,10 @@ _CAL_IMPORTANCE = {
     "CPI": "high", "Core CPI": "high", "NFP": "high", "PCE": "high",
     "PPI": "med", "FOMC": "high", "네마녀": "high",
 }
-# Korean weekday labels indexed by datetime.weekday() (Mon=0 .. Sun=6).
-_KR_WEEKDAYS = ["월", "화", "수", "목", "금", "토", "일"]
+# English weekday abbreviations indexed by datetime.weekday() (Mon=0 .. Sun=6).
+# CEO decision (2026-06-12): 주요 일정 chips show English (Mon/Tue/Wed/Thu/Fri)
+# instead of Korean. Field name stays `weekday` so the emitter needs no rename.
+_EN_WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
 # Annual schedule — update each January from https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm
 FOMC_DATES_2026 = [
@@ -154,10 +156,10 @@ def quad_witching_dates(year):
     return out
 
 
-def _kr_weekday(date_str):
-    """'YYYY-MM-DD' → Korean weekday label (월..일)."""
+def _en_weekday(date_str):
+    """'YYYY-MM-DD' → English weekday abbreviation (Mon..Sun)."""
     d = datetime.strptime(date_str, "%Y-%m-%d").date()
-    return _KR_WEEKDAYS[d.weekday()]
+    return _EN_WEEKDAYS[d.weekday()]
 
 
 def get_this_week_calendar(today=None):
@@ -168,8 +170,8 @@ def get_this_week_calendar(today=None):
       * FRED next-release dates for CPI/Core CPI/PPI/NFP/PCE
       * quad-witching (네마녀) days
     Only events whose date is within [monday, friday] are included. Each event
-    gets a pre-computed Korean weekday, a type (release|fomc|witching), and an
-    importance (high|med). Sorted by date.
+    gets a pre-computed English weekday abbreviation (Mon..Fri), a type
+    (release|fomc|witching), and an importance (high|med). Sorted by date.
 
     Tolerant: any FRED failure → that event is simply absent; `error` captures a
     message but the function NEVER raises (mirrors get_economic_calendar).
@@ -200,7 +202,7 @@ def get_this_week_calendar(today=None):
     for d in FOMC_DATES_2026:
         if in_window(d):
             result["events"].append({
-                "name": "FOMC", "date": d, "weekday": _kr_weekday(d),
+                "name": "FOMC", "date": d, "weekday": _en_weekday(d),
                 "type": "fomc", "importance": _CAL_IMPORTANCE["FOMC"],
             })
 
@@ -208,7 +210,7 @@ def get_this_week_calendar(today=None):
     for d in quad_witching_dates(today.year):
         if in_window(d):
             result["events"].append({
-                "name": "네마녀", "date": d, "weekday": _kr_weekday(d),
+                "name": "네마녀", "date": d, "weekday": _en_weekday(d),
                 "type": "witching", "importance": _CAL_IMPORTANCE["네마녀"],
             })
 
@@ -229,7 +231,7 @@ def get_this_week_calendar(today=None):
             if next_release and in_window(next_release):
                 result["events"].append({
                     "name": name, "date": next_release,
-                    "weekday": _kr_weekday(next_release),
+                    "weekday": _en_weekday(next_release),
                     "type": "release",
                     "importance": _CAL_IMPORTANCE.get(name, "high"),
                 })
