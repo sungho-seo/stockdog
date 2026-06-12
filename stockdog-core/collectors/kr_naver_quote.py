@@ -1,11 +1,24 @@
-"""KR price/index AUTHORITATIVE source — Naver Finance (same-day, T-0, NXT-inclusive).
+"""KR price/index AUTHORITATIVE source — Naver Finance (same-day, T-0, NXT 20:00 close).
 
 Replaces data.go.kr (`kr_indices.py` / `kr_stocks.py`) as the authoritative KR
 price/index source. data.go.kr 주식시세/지수 is **T+1 published** — it never
 returns same-day data, so the old pipeline silently fell back to T-1 and labeled
 it "fresh" (the /kr page showed YESTERDAY's prices). Naver's mobile finance API
-gives the **same-day close (T-0, NXT-inclusive, timestamp ~18:59)**, the SAME
-source K7 수급/외인% already come from (collectors/kr_investor_flow.py).
+gives the same-day close (T-0), the SAME source K7 수급/외인% already come from
+(collectors/kr_investor_flow.py).
+
+NXT vs KRX close — IMPORTANT. The 국장 now has an after-hours NXT session that
+settles at **20:00 KST**, and that 20:00 NXT print is the price 국장 watchers
+treat as "today's close". The `/api/stock/{code}/basic` response carries BOTH:
+  * `closePrice`                       = the **KRX 15:30 regular-session close**.
+  * `overMarketPriceInfo.overPrice`    = the **NXT 20:00 after-hours close**.
+This collector uses `overMarketPriceInfo.overPrice` (NXT 20:00) as the
+authoritative stock `close` once that after-hours session has SETTLED
+(`overMarketPriceInfo.overMarketStatus == "CLOSE"`), and falls back to
+`closePrice` (15:30 KRX) when there is no after-hours session for that ticker
+(`overMarketPriceInfo` absent — e.g. names with no NXT trade) or it has not yet
+closed. Indices have NO NXT session, so the index collector always uses
+`closePrice` (15:30) unchanged.
 
 This collector returns the SAME dict shape as the data.go.kr collectors
 (get_kr_index_data / get_kr_stock_data) so the snapshot/pipeline consume it
@@ -21,10 +34,17 @@ Endpoints (FREE, no auth, confirmed live 2026-06-12):
                 (UNSIGNED %), localTradedAt (ISO → trading date). No volume here.
             GET .../{KOSPI|KOSDAQ}/integration → totalInfos 거래량 ("493,406천주").
   * Stock:  GET https://m.stock.naver.com/api/stock/{code}/basic
-              → closePrice, compareToPreviousClosePrice, compareToPreviousPrice,
-                fluctuationsRatio, marketStatus, localTradedAt, stockExchangeType.
-            GET .../{code}/integration → totalInfos 거래량 (plain shares) + 전일
-                (prev_close) + market.
+              → closePrice (15:30 KRX close), compareToPreviousClosePrice,
+                compareToPreviousPrice, fluctuationsRatio, marketStatus,
+                localTradedAt, stockExchangeType, AND (when an after-hours NXT
+                session ran) overMarketPriceInfo = {overPrice (20:00 NXT close),
+                compareToPreviousPrice.code (direction), fluctuationsRatio
+                (UNSIGNED % vs PREV-DAY close), compareToPreviousClosePrice
+                (UNSIGNED magnitude vs prev-day close), localTradedAt
+                ("...T20:00:00+09:00"), overMarketStatus ("CLOSE" after 20:00)}.
+            GET .../{code}/integration → totalInfos 거래량 (KRX-session shares) +
+                전일 (prev_close) + market. NOTE volume is the KRX-session figure;
+                it does NOT include after-hours NXT volume.
 
 Direction code (Naver convention) decides the SIGN of the unsigned
 fluctuationsRatio / compareToPreviousClosePrice:
@@ -242,11 +262,55 @@ def _market_from_exchange(stock_exchange_type):
     return ""
 
 
+def _nxt_close_fields(basic):
+    """If a settled NXT 20:00 after-hours close exists, return its
+    (close, change_pct, prev_close, base_date); else None.
+
+    Source = basic['overMarketPriceInfo'] (present only when an after-hours NXT
+    session ran for this ticker). We use it ONLY when that session has SETTLED
+    (overMarketStatus == 'CLOSE'); a still-open / pre-close session falls back to
+    the 15:30 KRX closePrice. Fully defensive — any malformed field returns None
+    so the caller degrades to the regular-session logic. Never raises.
+    """
+    if not isinstance(basic, dict):
+        return None
+    nxt = basic.get("overMarketPriceInfo")
+    if not isinstance(nxt, dict):
+        return None
+    if str(nxt.get("overMarketStatus", "")).strip().upper() != "CLOSE":
+        return None
+    close = _parse_num(nxt.get("overPrice"))
+    if close is None:
+        return None
+    sign = _direction_sign(nxt.get("compareToPreviousPrice"))
+    change_pct_mag = _parse_num(nxt.get("fluctuationsRatio"))
+    change_pct = None if change_pct_mag is None else round(sign * change_pct_mag, 2)
+    compare_mag = _parse_num(nxt.get("compareToPreviousClosePrice"))
+    prev_close = None
+    if compare_mag is not None:
+        prev_close = int(round(close - sign * compare_mag))
+    # base_date: NXT localTradedAt is the same trading day as the KRX session;
+    # prefer it but fall back to the basic-level date below if absent.
+    base_date = _trade_date_from_iso(nxt.get("localTradedAt"))
+    return {
+        "close": int(round(close)),
+        "change_pct": change_pct,
+        "prev_close": prev_close,
+        "base_date": base_date,
+    }
+
+
 def _fetch_one_stock(code):
-    """One stock → standard price dict or None. Never raises."""
+    """One stock → standard price dict or None. Never raises.
+
+    Stock `close` is the **NXT 20:00 after-hours close** when that session has
+    settled (basic.overMarketPriceInfo.overMarketStatus == 'CLOSE'); otherwise
+    the **15:30 KRX regular close** (closePrice). See module docstring.
+    """
     basic = _get_json(_STOCK_BASIC_URL.format(code=code))
     if not isinstance(basic, dict):
         return None
+    # Regular-session (15:30 KRX) baseline — also the fallback when no NXT close.
     close = _parse_num(basic.get("closePrice"))
     if close is None:
         logger.warning(f"kr_naver_quote stock {code}: no closePrice")
@@ -260,6 +324,15 @@ def _fetch_one_stock(code):
         prev_close = int(round(close - sign * compare_mag))
     base_date = _trade_date_from_iso(basic.get("localTradedAt"))
     market = _market_from_exchange(basic.get("stockExchangeType"))
+
+    # Prefer the settled NXT 20:00 after-hours close when available.
+    nxt = _nxt_close_fields(basic)
+    if nxt is not None:
+        close = float(nxt["close"])
+        change_pct = nxt["change_pct"]
+        prev_close = nxt["prev_close"]
+        if nxt["base_date"]:
+            base_date = nxt["base_date"]
 
     # Volume from /integration totalInfos (거래량, plain shares).
     volume = None
