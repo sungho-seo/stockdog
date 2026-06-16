@@ -104,7 +104,7 @@ def analyze_us_market(data, meta=None):
    `> [!info] 13F 수집 비활성화 — 이번 리포트에는 기관 보유 데이터가 포함되지 않습니다.`
    추정·예상·일반론으로 빈 자리를 채우지 마세요.
 6. ## 단기 전망 — 데이터 기반 2-3일 관찰 포인트
-7. ## 경제 캘린더 — 향후 7일 발표 일정 테이블. releasing_today가 비어있지 않으면 > [!warning] 콜아웃으로 해당 이벤트와 잠재적 시장 영향을 명시.
+7. ## 경제 캘린더 — 향후 7일 발표 일정 테이블 (컬럼: 날짜 | 이벤트 | D-Day | 이전값 | 컨센서스). releasing_today가 비어있지 않으면 > [!warning] 콜아웃으로 해당 이벤트와 잠재적 시장 영향을 명시.
 """
 
     human_message = """Here is today's raw data:
