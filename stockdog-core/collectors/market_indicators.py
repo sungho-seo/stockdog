@@ -36,9 +36,11 @@ def fetch_fear_and_greed():
 def fetch_yahoo_finance_quote(ticker):
     """
     Fetches a basic quote from Yahoo Finance for indices like VIX or TNX (10Y Yield).
+    Uses 5d range to get reliable previous close from historical closes array,
+    avoiding stale chartPreviousClose for indices like ^VIX.
     """
     try:
-        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval=1d&range=1d"
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval=1d&range=5d"
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         }
@@ -47,16 +49,35 @@ def fetch_yahoo_finance_quote(ticker):
             data = response.json()
             result = data['chart']['result'][0]
             current_price = result['meta']['regularMarketPrice']
-            previous_close = result['meta']['chartPreviousClose']
-            change_percent = ((current_price - previous_close) / previous_close) * 100
-            
+
+            # Extract previous close from historical closes array.
+            # The last element is today; we want the most recent non-None close before that.
+            previous_close = None
+            closes = result.get('indicators', {}).get('quote', [{}])[0].get('close', []) or []
+            if closes:
+                # Iterate backwards from second-to-last (excluding today's close)
+                for c in reversed(closes[:-1]):
+                    if c is not None:
+                        previous_close = c
+                        break
+
+            # Fallback to chartPreviousClose if array extraction failed
+            if previous_close is None:
+                previous_close = result['meta'].get('chartPreviousClose')
+
+            # Calculate change percent if we have both prices
+            change_percent = None
+            if current_price is not None and previous_close is not None and previous_close != 0:
+                change_percent = ((current_price - previous_close) / previous_close) * 100
+                change_percent = round(change_percent, 2)
+
             return {
                 "price": current_price,
-                "change_percent": round(change_percent, 2)
+                "change_percent": change_percent
             }
     except Exception as e:
         logger.error(f"Failed to fetch Yahoo Finance for {ticker}: {e}")
-        
+
     return {"price": None, "change_percent": None}
 
 def get_all_indicators():
