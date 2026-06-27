@@ -497,7 +497,7 @@ def compute_insider_summary(history: list, asof: _date):
             sell_usd += val
     net_flow = buy_usd - sell_usd
 
-    breaches = [t for _, t in in_window if t.get("breach")]
+    breaches = [t for _, t in in_window if t.get("breach") and t.get("action") not in NETFLOW_EXCLUDE]
     senior_breaches = [t for t in breaches if role_is_senior(t.get("role"))]
 
     # cluster: ≥3 distinct insiders, same direction, within any ~5d span
