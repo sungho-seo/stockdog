@@ -54,6 +54,9 @@ ACTION_LABEL = {
     "V": "Voluntary",
 }
 
+# Market transaction codes (P=Purchase, S=Sale). All others are non-market (exercises, grants, etc.)
+MARKET_CODES = {"P", "S"}
+
 
 def _retry_get(
     url: str,
@@ -226,20 +229,26 @@ def _safe_text(el: Optional[ET.Element], path: str) -> str:
 
 
 def _parse_form4_xml(xml_text: str, accession: str) -> Dict[str, Any]:
-    """Form 4 XML → 단일 dict (집계).
+    """Form 4 XML → 단일 dict (집계, market transactions only).
 
     동일 Form 4 안에 여러 nonDerivativeTransaction 가능 → 본 함수는 각 transaction을
     list로 분해하지 않고 합산한 단일 레코드를 반환 (M7 트래커 임계값은 USD 금액 기준이라
     sub-transaction 단위 노이즈보다 accession 단위 합산이 유의미).
 
+    IMPORTANT: Market transactions (P=Purchase, S=Sale) are tracked separately from non-market
+    (M=Exercise, A=Grant, G=Gift, F=TaxWithholding, etc.). The headline (action/shares/price/value)
+    is computed from market transactions only. Non-market transactions are tracked in separate fields.
+
     Output:
       {
         accession, date (transaction date), insider_name, role,
-        action (대표 액션 — 합산 net direction),
-        shares (절댓값 합산), price_usd (가중평균), value_usd (= sum(shares*price))
+        action (대표 액션 — market only, or "Exercise"/"Other" for non-market-only),
+        shares (market shares, headline), price_usd (market weighted-avg, headline),
+        value_usd (market USD, headline),
+        market_shares, market_value_usd, nonmarket_shares, nonmarket_value_usd,
+        tx_codes (sorted list of all transactionCodes seen),
+        price_footnoted (bool, if any market row had price<=0)
       }
-    Multi-transaction shape일 경우 value_usd는 모든 nonDerivativeTransaction 행의
-    (shares × price) 절댓값 합산. 매수/매도가 섞이면 action은 "Mixed".
     """
     out: Dict[str, Any] = {
         "accession": accession,
@@ -251,6 +260,12 @@ def _parse_form4_xml(xml_text: str, accession: str) -> Dict[str, Any]:
         "price_usd": 0.0,
         "value_usd": 0.0,
         "security_titles": [],
+        "market_shares": 0.0,
+        "market_value_usd": 0.0,
+        "nonmarket_shares": 0.0,
+        "nonmarket_value_usd": 0.0,
+        "tx_codes": [],
+        "price_footnoted": False,
     }
     try:
         root = ET.fromstring(xml_text)
@@ -280,14 +295,24 @@ def _parse_form4_xml(xml_text: str, accession: str) -> Dict[str, Any]:
                 roles.append(title)
         out["role"] = ", ".join(roles)
 
-    total_signed_value = 0.0  # signed (buy +, sell -) for action direction
-    abs_value = 0.0
-    abs_shares = 0.0
-    weighted_price_num = 0.0  # for weighted-avg price
-    weighted_price_den = 0.0
-    actions_seen = set()
+    # Track market and non-market separately
+    mkt_buy_shares = 0.0
+    mkt_buy_value = 0.0
+    mkt_buy_weighted_num = 0.0
+    mkt_buy_weighted_den = 0.0
+
+    mkt_sell_shares = 0.0
+    mkt_sell_value = 0.0
+    mkt_sell_weighted_num = 0.0
+    mkt_sell_weighted_den = 0.0
+
+    nonmkt_shares = 0.0
+    nonmkt_value = 0.0
+    nonmkt_codes: set = set()
+
     latest_tx_date = None
     sec_titles: List[str] = []
+    all_codes: set = set()
 
     for tx in root.findall(".//nonDerivativeTransaction"):
         title = _safe_text(tx, "securityTitle/value")
@@ -317,38 +342,73 @@ def _parse_form4_xml(xml_text: str, accession: str) -> Dict[str, Any]:
         except ValueError:
             price = 0.0
 
-        signed_value = shares * price * (1 if ad == "A" else -1 if ad == "D" else 0)
-        total_signed_value += signed_value
-        abs_value += abs(shares * price)
-        abs_shares += abs(shares)
-        if price > 0:
-            weighted_price_num += abs(shares) * price
-            weighted_price_den += abs(shares)
-
         if code:
-            actions_seen.add(code)
+            all_codes.add(code)
 
-    out["shares"] = abs_shares
-    out["value_usd"] = abs_value
-    if weighted_price_den > 0:
-        out["price_usd"] = round(weighted_price_num / weighted_price_den, 4)
+        # Classify by transactionCode
+        if code in MARKET_CODES:
+            # Market transaction
+            tx_value = abs(shares * price)
+            if ad == "A":  # Acquired (buy)
+                mkt_buy_shares += abs(shares)
+                mkt_buy_value += tx_value
+                if price > 0:
+                    mkt_buy_weighted_num += abs(shares) * price
+                    mkt_buy_weighted_den += abs(shares)
+                else:
+                    out["price_footnoted"] = True
+            elif ad == "D":  # Disposed (sell)
+                mkt_sell_shares += abs(shares)
+                mkt_sell_value += tx_value
+                if price > 0:
+                    mkt_sell_weighted_num += abs(shares) * price
+                    mkt_sell_weighted_den += abs(shares)
+                else:
+                    out["price_footnoted"] = True
+        else:
+            # Non-market transaction (exercise, grant, gift, etc.)
+            nonmkt_shares += abs(shares)
+            nonmkt_value += abs(shares * price)
+            if code:
+                nonmkt_codes.add(code)
 
-    # 대표 action 결정
-    if actions_seen:
-        if len(actions_seen) == 1:
-            code = next(iter(actions_seen))
+    # Headline derivation: prioritize market transactions
+    if mkt_buy_value > 0 or mkt_sell_value > 0:
+        # Market transactions present — pick dominant direction
+        if mkt_buy_value > mkt_sell_value:
+            out["action"] = "Buy"
+            out["shares"] = mkt_buy_shares
+            out["value_usd"] = mkt_buy_value
+            if mkt_buy_weighted_den > 0:
+                out["price_usd"] = round(mkt_buy_weighted_num / mkt_buy_weighted_den, 4)
+        else:
+            out["action"] = "Sell"
+            out["shares"] = mkt_sell_shares
+            out["value_usd"] = mkt_sell_value
+            if mkt_sell_weighted_den > 0:
+                out["price_usd"] = round(mkt_sell_weighted_num / mkt_sell_weighted_den, 4)
+    elif nonmkt_shares > 0:
+        # Only non-market transactions
+        out["shares"] = 0.0  # Headline shares = 0 for non-market
+        out["value_usd"] = 0.0  # Headline value = 0 for non-market
+        out["price_usd"] = 0.0
+        if len(nonmkt_codes) == 1:
+            code = next(iter(nonmkt_codes))
             out["action"] = ACTION_LABEL.get(code, code)
         else:
-            # 여러 코드 — net direction 우선
-            if total_signed_value > 0:
-                out["action"] = "Buy"
-            elif total_signed_value < 0:
-                out["action"] = "Sell"
-            else:
-                out["action"] = "Mixed"
+            out["action"] = "Other" if nonmkt_codes else ""
     else:
-        # nonDerivative 없음 — derivative만 있는 케이스, value 0
+        # No transactions
         out["action"] = ""
+
+    # Market and non-market fields (for detailed tracking)
+    out["market_shares"] = mkt_buy_shares + mkt_sell_shares
+    out["market_value_usd"] = mkt_buy_value + mkt_sell_value
+    out["nonmarket_shares"] = nonmkt_shares
+    out["nonmarket_value_usd"] = nonmkt_value
+
+    # All transaction codes seen (for debugging and filtering)
+    out["tx_codes"] = sorted(list(all_codes))
 
     if latest_tx_date:
         out["date"] = latest_tx_date.isoformat()

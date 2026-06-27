@@ -48,7 +48,7 @@ storage:
   raw_base_dir: "/notes/raw/stockdog/m7"
   per_symbol_history_cap_days: 90
   per_day_dump_cap_days: null
-  schema_version: 1
+  schema_version: 2
 
 calendar:
   source_module: "utils.us_holidays"
