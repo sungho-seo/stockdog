@@ -11,7 +11,7 @@ FRED_BASE = "https://api.stlouisfed.org/fred"
 FRED_SERIES = {
     "CPI":      "CPIAUCSL",
     "Core CPI": "CPILFESL",
-    "PPI":      "PPIACO",
+    "PPI":      "PPIFIS",
     # IMPR-0xx (주요 일정 chips): NFP (employment situation, PAYEMS) and
     # PCE (PCE price index, PCEPI) added so the this-week calendar can surface
     # their next release dates. Reuses _next_release_date like the others.
@@ -33,9 +33,9 @@ _EN_WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
 # Annual schedule — update each January from https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm
 FOMC_DATES_2026 = [
-    "2026-01-28", "2026-03-18", "2026-05-06",
+    "2026-01-28", "2026-03-18", "2026-04-29",
     "2026-06-17", "2026-07-29", "2026-09-16",
-    "2026-10-28", "2026-12-16",
+    "2026-10-28", "2026-12-09",
 ]
 
 # IMPR-061: 2027 schedule not yet published by the Fed as of build time.
