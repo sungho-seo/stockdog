@@ -73,7 +73,19 @@ def run(silent: bool = False) -> int:
                 logger.warning(f"Telegram send failed (non-fatal): {te}")
         return 1
 
-    # 3. Optional Telegram notification
+    # 3. Fix directory ownership (non-fatal)
+    # Ubuntu user is uid/gid 1001. Both dockerized collector (root) and sector_read_run.sh (ubuntu)
+    # need write access to raw_base_dir.
+    try:
+        ubuntu_uid = 1001
+        ubuntu_gid = 1001
+        os.chown(raw_base_dir, ubuntu_uid, ubuntu_gid)
+        os.chown(snapshot_path, ubuntu_uid, ubuntu_gid)
+        print(f"[Sectors] fixed ownership: {raw_base_dir} → ubuntu (1001:1001)")
+    except Exception as e:
+        logger.warning(f"[Sectors] chown failed (non-fatal): {e}")
+
+    # 4. Optional Telegram notification
     if silent:
         print("[Sectors] --silent — skip Telegram.")
     else:

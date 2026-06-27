@@ -1,5 +1,5 @@
 """
-US GICS Sector Rotation Tracker (11 sector ETFs).
+US GICS Sector Rotation Tracker (11 sector ETFs) + Theme ETFs (5 themes).
 
 Fetches 11 sector ETFs via yfinance:
   XLK (Technology), XLC (Communication), XLY (Consumer Discretionary),
@@ -7,17 +7,21 @@ Fetches 11 sector ETFs via yfinance:
   XLV (Healthcare), XLI (Industrials), XLB (Materials),
   XLU (Utilities), XLRE (Real Estate)
 
+Plus 5 theme/industry ETFs:
+  SMH (반도체), IGV (소프트웨어), MAGS (M7 메가캡),
+  CIBR (사이버보안), QTUM (양자컴퓨팅)
+
 Per-ETF metrics:
   - close: latest closing price
   - d1: 1-day change % (last vs prior session)
   - d5: 5-session change % (last vs 5 sessions ago)
   - d1mo: ~1-month change % (last vs first in 3-month window, ~21 sessions)
   - momentum: d5 + d1mo (score)
-  - rank: 1-11 by momentum descending
+  - rank: 1-11 (sectors) or 1-5 (themes) by momentum descending
 
 Output (call collect_us_sectors()):
   {
-    "schema_version": 1,
+    "schema_version": 2,
     "asof": "YYYY-MM-DD" (last index date, US session date),
     "generated": "<UTC iso>",
     "source": "yfinance",
@@ -30,6 +34,19 @@ Output (call collect_us_sectors()):
         "d5": 2.13,
         "d1mo": -1.23,
         "momentum": 0.90,
+        "rank": 1
+      },
+      ...
+    ],
+    "themes": [
+      {
+        "etf": "SMH",
+        "name": "반도체",
+        "close": 234.56,
+        "d1": 1.23,
+        "d5": 3.45,
+        "d1mo": 2.10,
+        "momentum": 5.55,
         "rank": 1
       },
       ...
@@ -58,6 +75,14 @@ SECTOR_ETFS = [
     ("XLB", "Materials"),
     ("XLU", "Utilities"),
     ("XLRE", "Real Estate"),
+]
+
+THEME_ETFS = [
+    ("SMH", "반도체"),
+    ("IGV", "소프트웨어"),
+    ("MAGS", "M7 메가캡"),
+    ("CIBR", "사이버보안"),
+    ("QTUM", "양자컴퓨팅"),
 ]
 
 
@@ -117,15 +142,19 @@ def _fetch_one(etf: str, name: str) -> Optional[Dict[str, Any]]:
 
 def collect_us_sectors() -> Dict[str, Any]:
     """
-    Fetch all 11 sector ETFs and compute metrics.
+    Fetch all 11 sector ETFs and 5 theme ETFs, compute metrics.
 
     Returns:
       {
-        "schema_version": 1,
+        "schema_version": 2,
         "asof": "YYYY-MM-DD",
         "generated": "<UTC iso>",
         "source": "yfinance",
         "sectors": [
+          {etf, name, close, d1, d5, d1mo, momentum, rank},
+          ...
+        ],
+        "themes": [
           {etf, name, close, d1, d5, d1mo, momentum, rank},
           ...
         ]
@@ -134,6 +163,7 @@ def collect_us_sectors() -> Dict[str, Any]:
     Per-ETF failures are nulled but don't kill the batch.
     """
     sectors: List[Dict[str, Any]] = []
+    themes: List[Dict[str, Any]] = []
     asof = None
 
     print("[us_sectors] fetching 11 GICS sector ETFs...")
@@ -159,24 +189,57 @@ def collect_us_sectors() -> Dict[str, Any]:
             })
             print("✗")
 
-    # Rank by momentum descending (skip nulls)
-    valid = [s for s in sectors if s.get("momentum") is not None]
-    valid.sort(key=lambda s: s["momentum"], reverse=True)
+    # Rank sectors by momentum descending (skip nulls)
+    valid_sectors = [s for s in sectors if s.get("momentum") is not None]
+    valid_sectors.sort(key=lambda s: s["momentum"], reverse=True)
 
-    # Assign ranks
-    rank_map = {s["etf"]: i + 1 for i, s in enumerate(valid)}
+    # Assign sector ranks
+    sector_rank_map = {s["etf"]: i + 1 for i, s in enumerate(valid_sectors)}
     for s in sectors:
-        s["rank"] = rank_map.get(s["etf"])
+        s["rank"] = sector_rank_map.get(s["etf"])
+
+    print("[us_sectors] fetching 5 theme ETFs...")
+    for etf, name in THEME_ETFS:
+        print(f"  {etf} ({name})...", end=" ", flush=True)
+        data = _fetch_one(etf, name)
+        if data:
+            themes.append(data)
+            if asof is None:
+                asof = data["asof"]
+            print("✓")
+        else:
+            # null fields for failed ticker
+            themes.append({
+                "etf": etf,
+                "name": name,
+                "close": None,
+                "d1": None,
+                "d5": None,
+                "d1mo": None,
+                "momentum": None,
+                "asof": None,
+            })
+            print("✗")
+
+    # Rank themes by momentum descending (skip nulls)
+    valid_themes = [t for t in themes if t.get("momentum") is not None]
+    valid_themes.sort(key=lambda t: t["momentum"], reverse=True)
+
+    # Assign theme ranks (separate from sectors)
+    theme_rank_map = {t["etf"]: i + 1 for i, t in enumerate(valid_themes)}
+    for t in themes:
+        t["rank"] = theme_rank_map.get(t["etf"])
 
     if asof is None:
         asof = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "asof": asof,
         "generated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "source": "yfinance",
         "sectors": sectors,
+        "themes": themes,
     }
 
 
@@ -189,5 +252,7 @@ if __name__ == "__main__":
     out = collect_us_sectors()
     print("\n=== US Sectors Collector Result ===")
     print(json.dumps(out, indent=2, ensure_ascii=False))
-    print(f"\nTotal ETFs: {len(out['sectors'])} / {len(SECTOR_ETFS)}")
+    print(f"\nTotal Sector ETFs: {len(out['sectors'])} / {len(SECTOR_ETFS)}")
+    print(f"Total Theme ETFs: {len(out['themes'])} / {len(THEME_ETFS)}")
+    print(f"Schema Version: {out['schema_version']}")
     print(f"As-of: {out['asof']}")
