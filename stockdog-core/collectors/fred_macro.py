@@ -44,7 +44,7 @@ WEEKLY_SERIES = {
 MONTHLY_SERIES = {
     "cpi":      "CPIAUCSL",   # CPI, all items
     "core_cpi": "CPILFESL",   # CPI less food & energy
-    "ppi":      "PPIACO",     # PPI, all commodities
+    "ppi":      "PPIFIS",     # PPI, final demand (headline — the market-referenced number)
     "pce":      "PCEPILFE",   # Core PCE Price Index — YoY computed same as CPI/PPI
     "unrate":   "UNRATE",     # Civilian Unemployment Rate (%)
 }

@@ -106,9 +106,9 @@ def drift_flag(values_oldest_to_newest) -> str:
 # 2027 unpublished as of build → empty list triggers M6 graceful fallback.
 # ===========================================================================
 FOMC_DATES = [
-    "2026-01-28", "2026-03-18", "2026-05-06",
+    "2026-01-28", "2026-03-18", "2026-04-29",
     "2026-06-17", "2026-07-29", "2026-09-16",
-    "2026-10-28", "2026-12-16",
+    "2026-10-28", "2026-12-09",
     # 2027: TODO confirm from federalreserve.gov
 ]
 
