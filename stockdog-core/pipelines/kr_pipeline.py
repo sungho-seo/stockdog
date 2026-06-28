@@ -18,6 +18,7 @@ from collectors.kr_naver_quote import (
 # from collectors.kr_indices import get_kr_index_data as get_kr_index_data_datago
 from collectors.kr_investor_flow import (
     fetch_market_investor_flows,
+    fetch_market_flow_insights,
     fetch_stock_investor_flows,
     fetch_foreign_streaks,
 )
@@ -148,11 +149,22 @@ class KRPipeline(MarketPipeline):
         # none can abort the pipeline. They reuse the SAME free Naver hosts
         # already in use. The 투심 게이지(Phase B) is computed downstream in
         # utils/kr_snapshot.py from breadth + investor_flows (no extra fetch).
+        # P1-1: enrich the single-day market flows with streak + cum5 + cum20
+        # INSIGHTS (multi-day backfill from the SAME free Naver host). Both
+        # fetches are fully tolerant (return None / never raise); the insight
+        # block is attached as a PARALLEL key so the existing single-day read
+        # (and the 투심 게이지 su_geup sub-score) keeps working unchanged.
+        _flows = fetch_market_investor_flows()
+        if isinstance(_flows, dict):
+            _insights = fetch_market_flow_insights()
+            if isinstance(_insights, dict):
+                _flows['insights'] = _insights
+
         return {
             'kr_stocks': get_kr_stock_data(kr_stock_items),
             'kr_indices': get_kr_index_data(kr_index_items),
             'exchange': get_exchange_rates(),
-            'investor_flows': fetch_market_investor_flows(),
+            'investor_flows': _flows,
             'kr_k7_prices': get_kr_stock_data(k7_items) if k7_items else {},
             'kr_k7_flows': fetch_stock_investor_flows(k7_codes) if k7_codes else {},
             'kr_breadth': fetch_market_breadth(),

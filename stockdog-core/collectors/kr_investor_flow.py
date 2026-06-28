@@ -359,3 +359,192 @@ def fetch_foreign_streaks(codes):
         if i < len(codes) - 1:
             time.sleep(_STOCK_DELAY_S)
     return out
+
+
+# ---------------------------------------------------------------------------
+# MARKET-LEVEL 수급 INSIGHTS (P1-1). streak + cum5 + cum20 per investor per
+# market — a multi-day BACKFILL from Naver's DESKTOP daily investor-trend table:
+#
+#   GET https://finance.naver.com/sise/investorDealTrendDay.naver
+#         ?bizdate=YYYYMMDD&sosok={01=KOSPI|02=KOSDAQ}&page=N
+#
+# Each page returns ~10 rows NEWEST-FIRST, columns (단위: 억원):
+#   [날짜 | 개인 | 외국인 | 기관계 | 금융투자 | 보험 | 투신 | 은행 | 기타금융 | 연기금 | 기타법인]
+# We take 개인=individual, 외국인=foreign, 기관계=institutional (기관계 matches
+# the mobile /trend institutionalValue exactly — verified 2026-06-26 KOSPI
+# 기관계 −41,224 == institutionalValue −41,224). 3 pages → ~30 trading days,
+# enough for cum20 + any streak. SAME free Naver host already in use; EUC-KR
+# HTML parsed with stdlib re+html (NO new dependency). NEVER raises — every
+# failure path returns None/{} so the KR pipeline is never aborted.
+# ---------------------------------------------------------------------------
+import html as _html  # noqa: E402  (stdlib; local to the market-insights block)
+import re as _re      # noqa: E402
+from datetime import datetime as _dt, timedelta as _td, timezone as _tz  # noqa: E402
+
+_DEAL_TREND_URL = "https://finance.naver.com/sise/investorDealTrendDay.naver"
+# sosok query value per market (Naver desktop 거래소/코스닥 code).
+_DEAL_SOSOK = {"KOSPI": "01", "KOSDAQ": "02"}
+# Desktop endpoint is EUC-KR + expects a finance.naver.com referer.
+_DEAL_HEADERS = {
+    "User-Agent": _HEADERS["User-Agent"],
+    "Referer": "https://finance.naver.com/sise/sise_index.naver?code=KOSPI",
+}
+# ~10 rows/page; 3 pages → ~30 trading days (covers cum20 + long streaks).
+_DEAL_PAGES = 3
+# Investor buckets in the insight block (snapshot key → desktop column index).
+_DEAL_INVESTORS = ("individual", "foreign", "institutional")
+# Polite delay between the desktop page fetches.
+_DEAL_DELAY_S = 0.3
+
+
+def _kst_today_yyyymmdd():
+    """KST 'YYYYMMDD' — the bizdate anchor (newest row the table returns)."""
+    return (_dt.now(_tz.utc) + _td(hours=9)).strftime("%Y%m%d")
+
+
+def _parse_deal_trend_rows(html_text):
+    """Parse one investorDealTrendDay page → list of rows NEWEST-FIRST:
+        [{"date": "YYYY-MM-DD", "individual": int|None,
+          "foreign": int|None, "institutional": int|None}, ...]
+
+    A data row's first cell is a 'YY.MM.DD' date; cells[1..3] are
+    개인/외국인/기관계 (억원, signed comma-strings). Tolerant → [] on any miss.
+    """
+    rows = []
+    try:
+        for tr in _re.findall(r"<tr[^>]*>(.*?)</tr>", html_text, _re.S):
+            cells = _re.findall(r"<td[^>]*>(.*?)</td>", tr, _re.S)
+            if len(cells) < 4:
+                continue
+            txt = [_html.unescape(_re.sub(r"<[^>]+>", "", c)).strip() for c in cells]
+            m = _re.match(r"(\d{2})\.(\d{2})\.(\d{2})", txt[0])
+            if not m:
+                continue
+            yy, mm, dd = m.groups()
+            iso = f"20{yy}-{mm}-{dd}"
+            rows.append({
+                "date": iso,
+                "individual": _parse_signed_eok(txt[1]),
+                "foreign": _parse_signed_eok(txt[2]),
+                "institutional": _parse_signed_eok(txt[3]),
+            })
+    except Exception as e:
+        logger.warning(f"kr_investor_flow deal-trend parse failed, ignoring: {e}")
+        return []
+    return rows
+
+
+def _fetch_market_flow_series(market, pages=_DEAL_PAGES):
+    """Fetch a market's daily investor-flow series NEWEST-FIRST (deduped by
+    date), spanning ~10*pages trading days. Returns a list of row dicts (see
+    _parse_deal_trend_rows) or [] on total failure. NEVER raises.
+    """
+    sosok = _DEAL_SOSOK.get(market)
+    if not sosok:
+        return []
+    bizdate = _kst_today_yyyymmdd()
+    out = []
+    seen = set()
+    for page in range(1, pages + 1):
+        url = (f"{_DEAL_TREND_URL}?bizdate={bizdate}&sosok={sosok}&page={page}")
+        try:
+            resp = requests.get(url, headers=_DEAL_HEADERS, timeout=_TIMEOUT)
+            resp.raise_for_status()
+            resp.encoding = "euc-kr"
+            page_rows = _parse_deal_trend_rows(resp.text)
+        except Exception as e:
+            logger.warning(
+                f"kr_investor_flow deal-trend {market} p{page} failed, ignoring: {e}")
+            page_rows = []
+        if not page_rows:
+            break  # no more data (or a failure) — stop paging
+        for r in page_rows:
+            if r["date"] in seen:
+                continue
+            seen.add(r["date"])
+            out.append(r)
+        if page < pages:
+            time.sleep(_DEAL_DELAY_S)
+    # Defensive: ensure strict newest-first by date (the table already is).
+    out.sort(key=lambda r: r["date"], reverse=True)
+    return out
+
+
+def _cum_sum(values, n):
+    """Sum the most recent ``n`` non-None entries of ``values`` (newest-first).
+    Returns (total:int|None, days_used:int). None total when no usable value.
+    """
+    total = 0
+    used = 0
+    for v in values[:n]:
+        if isinstance(v, (int, float)):
+            total += v
+            used += 1
+    if used == 0:
+        return None, 0
+    return int(total), used
+
+
+def _market_flow_insight(rows):
+    """Per-investor streak + cum5 + cum20 for ONE market.
+
+    rows: daily series NEWEST-FIRST (from _fetch_market_flow_series).
+    Returns {investor: {"streak_days", "direction", "cum5", "cum20",
+                         "cum20_days"}} for every investor with usable data,
+    or {} when nothing computable.
+    """
+    out = {}
+    if not rows:
+        return out
+    for inv in _DEAL_INVESTORS:
+        series = [r.get(inv) for r in rows]
+        if all(v is None for v in series):
+            continue
+        st = _streak_from_quants(series)
+        cum5, _ = _cum_sum(series, 5)
+        cum20, cum20_days = _cum_sum(series, 20)
+        out[inv] = {
+            "streak_days": st["streak_days"],
+            "direction": st["direction"],
+            "cum5": cum5,
+            "cum20": cum20,
+            "cum20_days": cum20_days,
+        }
+    return out
+
+
+def fetch_market_flow_insights():
+    """Market-level 수급 INSIGHTS (P1-1): streak + cum5 + cum20 per investor
+    per market, backfilled from Naver's desktop daily investor-trend table.
+
+    Returns:
+        {
+          "data_date": "2026-06-26",     # newest row's date (best-effort)
+          "unit": "억원",
+          "KOSPI":  {"individual": {streak_days, direction, cum5, cum20, cum20_days},
+                     "foreign": {...}, "institutional": {...}},
+          "KOSDAQ": {...},
+        }
+      or None when NEITHER market yields a usable series. The single-day
+      `market` block (fetch_market_investor_flows) is unchanged; this is a
+      PARALLEL enrichment. NEVER raises.
+    """
+    try:
+        out = {}
+        data_date = None
+        for market in _MARKETS:
+            rows = _fetch_market_flow_series(market)
+            ins = _market_flow_insight(rows)
+            if ins:
+                out[market] = ins
+                if data_date is None and rows:
+                    data_date = rows[0].get("date")
+        if not out:
+            logger.warning("kr_investor_flow: no market flow insights, returning None")
+            return None
+        out["data_date"] = data_date
+        out["unit"] = "억원"
+        return out
+    except Exception as e:
+        logger.warning(f"fetch_market_flow_insights failed, ignoring: {e}")
+        return None
