@@ -24,6 +24,7 @@ from collectors.kr_investor_flow import (
 )
 from collectors.kr_breadth import fetch_market_breadth
 from collectors.kr_sectors import fetch_kr_sectors
+from collectors.kr_calendar import get_kr_calendar
 from collectors.kr_index_history import fetch_index_history
 from collectors.exchange_rates import get_exchange_rates
 from analysis.llm_analyzer import analyze_kr_market, build_report_header
@@ -175,6 +176,10 @@ class KRPipeline(MarketPipeline):
             'kr_sectors': fetch_kr_sectors(),
             'kr_index_history': fetch_index_history(),
             'kr_k7_foreign_streaks': fetch_foreign_streaks(k7_codes) if k7_codes else {},
+            # 주요 일정 (P2/Phase D): upcoming 금통위/네마녀/MSCI events. PURE date
+            # math + baked, VERIFIED constants — NO network, NO LLM (never raises,
+            # returns {events:[]} on any failure) so it can NEVER abort the pipeline.
+            'kr_calendar': get_kr_calendar(),
         }
 
     def _compute_freshness(self, data_as_of: str | None) -> tuple[str | None, int | None]:

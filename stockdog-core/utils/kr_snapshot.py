@@ -345,6 +345,14 @@ def build_kr_snapshot(data, *, updated, data_date=None,
     if isinstance(sectors_in, list) and sectors_in:
         sectors = {"data_date": data_date, "items": sectors_in}
 
+    # ---- 주요 일정 (P2/Phase D) — kr_calendar passthrough ----
+    # data['kr_calendar'] is a best-effort {"data_date","events":[...]} dict from
+    # collectors.kr_calendar (pure date math + baked constants, no network). Pass
+    # it through as-is. Tolerant: a missing/empty/non-dict source degrades to None
+    # → the emitter hides the card when there are no upcoming events.
+    calendar_in = (data or {}).get("kr_calendar")
+    calendar = calendar_in if isinstance(calendar_in, dict) else None
+
     return {
         "updated": updated,
         "data_date": data_date,
@@ -365,6 +373,10 @@ def build_kr_snapshot(data, *, updated, data_date=None,
         # advancing, declining, steady, members}, ...]} or None. The emitter
         # renders the 섹터 등락 card only when present & non-empty.
         "sectors": sectors,
+        # 주요 일정 (P2/Phase D): {data_date, events:[{name,date,type,days_until}]}
+        # or None. FUTURE-only 금통위/네마녀/MSCI events; the emitter recomputes
+        # D-N at build time and renders the card only when events is non-empty.
+        "calendar": calendar,
         # P3-A (K7 대형주): per-stock price + 수급 direction (주). [] when
         # unavailable; the emitter renders the block only when non-empty.
         "k7": k7,
