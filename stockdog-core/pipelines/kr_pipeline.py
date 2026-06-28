@@ -23,6 +23,7 @@ from collectors.kr_investor_flow import (
     fetch_foreign_streaks,
 )
 from collectors.kr_breadth import fetch_market_breadth
+from collectors.kr_sectors import fetch_kr_sectors
 from collectors.kr_index_history import fetch_index_history
 from collectors.exchange_rates import get_exchange_rates
 from analysis.llm_analyzer import analyze_kr_market, build_report_header
@@ -168,6 +169,10 @@ class KRPipeline(MarketPipeline):
             'kr_k7_prices': get_kr_stock_data(k7_items) if k7_items else {},
             'kr_k7_flows': fetch_stock_investor_flows(k7_codes) if k7_codes else {},
             'kr_breadth': fetch_market_breadth(),
+            # Phase C (업종 로테이션): full 업종 list w/ signed 등락률 + 상승/하락
+            # 종목수 from the SAME free Naver mobile host. Tolerant (returns None,
+            # never raises) so it can NEVER abort the pipeline.
+            'kr_sectors': fetch_kr_sectors(),
             'kr_index_history': fetch_index_history(),
             'kr_k7_foreign_streaks': fetch_foreign_streaks(k7_codes) if k7_codes else {},
         }

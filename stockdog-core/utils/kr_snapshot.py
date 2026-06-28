@@ -334,6 +334,17 @@ def build_kr_snapshot(data, *, updated, data_date=None,
     # ---- Phase B (투심 게이지) — computed in Python here (testable) ----
     sentiment_gauge = build_sentiment_gauge(flows_in, breadth)
 
+    # ---- Phase C (업종 로테이션) — kr_sectors list passthrough ----
+    # data['kr_sectors'] is a best-effort list (or None). Wrap it as a block
+    # carrying the snapshot data_date so the emitter can label "N기준". The
+    # endpoint returns no date of its own, so the snapshot's trading day is the
+    # authoritative as-of (same fetch cadence as breadth/flows). Tolerant: a
+    # missing/empty/non-list source degrades to None → emitter hides the card.
+    sectors_in = (data or {}).get("kr_sectors")
+    sectors = None
+    if isinstance(sectors_in, list) and sectors_in:
+        sectors = {"data_date": data_date, "items": sectors_in}
+
     return {
         "updated": updated,
         "data_date": data_date,
@@ -350,6 +361,10 @@ def build_kr_snapshot(data, *, updated, data_date=None,
         # Phase B (투심 게이지): {score,label,breakdown:{su_geup,breadth,tilt}}
         # or None. HONEST proxy (수급+breadth+등락비), NOT CNN F&G.
         "sentiment_gauge": sentiment_gauge,
+        # Phase C (업종 로테이션): {data_date, items:[{name, change_pct(signed),
+        # advancing, declining, steady, members}, ...]} or None. The emitter
+        # renders the 섹터 등락 card only when present & non-empty.
+        "sectors": sectors,
         # P3-A (K7 대형주): per-stock price + 수급 direction (주). [] when
         # unavailable; the emitter renders the block only when non-empty.
         "k7": k7,
