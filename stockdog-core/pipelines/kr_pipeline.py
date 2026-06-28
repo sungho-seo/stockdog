@@ -218,6 +218,15 @@ class KRPipeline(MarketPipeline):
         save_report(final_report, self.config, region="KR", status=status,
                     data_as_of=data_as_of, data_freshness=data_freshness)
 
+        # SAMPLE-SAFETY GUARD: a --sample run slices every list to [:1]
+        # (collect()), so the snapshot would ship k7→1 / KOSPI-only / 1 mover and
+        # save() would atomically OVERWRITE the real production kr_snapshot.json
+        # with that truncated junk (this exact incident destroyed 6/26 data on
+        # 2026-06-27). NEVER write the production snapshot under --sample.
+        if self.sample:
+            print("[KRPipeline] --sample: skipping production kr_snapshot.json dump")
+            return
+
         # KR public-garden snapshot dump (P1 of the 국장/KR page). Built from the
         # dicts we ALREADY collected — no new collector, no extra external API.
         # Tolerant: never aborts the pipeline (build_kr_snapshot/write are

@@ -29,18 +29,20 @@ unchanged:
 
 Endpoints (FREE, no auth, confirmed live 2026-06-12):
   * Index:  GET https://m.stock.naver.com/api/index/{KOSPI|KOSDAQ}/basic
-              → closePrice, compareToPreviousClosePrice (UNSIGNED magnitude),
-                compareToPreviousPrice.code (direction), fluctuationsRatio
-                (UNSIGNED %), localTradedAt (ISO → trading date). No volume here.
+              → closePrice, compareToPreviousClosePrice (ALREADY-SIGNED, e.g.
+                "-519.09"), compareToPreviousPrice.code (direction, informational
+                only), fluctuationsRatio (ALREADY-SIGNED %, e.g. "-5.81"),
+                localTradedAt (ISO → trading date). No volume here.
             GET .../{KOSPI|KOSDAQ}/integration → totalInfos 거래량 ("493,406천주").
   * Stock:  GET https://m.stock.naver.com/api/stock/{code}/basic
               → closePrice (15:30 KRX close), compareToPreviousClosePrice,
                 compareToPreviousPrice, fluctuationsRatio, marketStatus,
                 localTradedAt, stockExchangeType, AND (when an after-hours NXT
                 session ran) overMarketPriceInfo = {overPrice (20:00 NXT close),
-                compareToPreviousPrice.code (direction), fluctuationsRatio
-                (UNSIGNED % vs PREV-DAY close), compareToPreviousClosePrice
-                (UNSIGNED magnitude vs prev-day close), localTradedAt
+                compareToPreviousPrice.code (direction, informational only),
+                fluctuationsRatio (ALREADY-SIGNED % vs PREV-DAY close),
+                compareToPreviousClosePrice (ALREADY-SIGNED vs prev-day close),
+                localTradedAt
                 ("...T20:00:00+09:00"), overMarketStatus ("CLOSE" after 20:00)}.
             GET .../{code}/integration → totalInfos 거래량 + 전일 (prev_close) +
                 market. NOTE: /integration 거래량 is the **NXT-inclusive (KRX+NXT
@@ -49,8 +51,10 @@ Endpoints (FREE, no auth, confirmed live 2026-06-12):
                 e.g. 삼성전자 06-12 = 60.07M consolidated vs 30.72M KRX-only).
                 Do NOT "correct" this to /trend — that would DROP NXT volume.
 
-Direction code (Naver convention) decides the SIGN of the unsigned
-fluctuationsRatio / compareToPreviousClosePrice:
+Direction code (Naver convention) — INFORMATIONAL ONLY. The numeric fields
+(fluctuationsRatio / compareToPreviousClosePrice) are ALREADY SIGNED, so we trust
+them directly and do NOT multiply by a derived sign (doing so double-negated DOWN
+days — fixed 2026-06-28). The code mapping, for reference:
     1=상한, 2=상승  → UP   (+)
     3=보합          → FLAT (0)
     4=하한, 5=하락  → DOWN (−)
@@ -87,10 +91,6 @@ _STOCK_DELAY_S = 0.4
 # Naver ticker → index-name (matches data.go.kr collector's index_name_map keys).
 _INDEX_MARKETS = {"KOSPI": "KOSPI", "KOSDAQ": "KOSDAQ"}
 
-# Direction codes that imply a NEGATIVE move (하한 / 하락).
-_DOWN_CODES = {"4", "5"}
-_FLAT_CODES = {"3"}
-
 
 # ---------------------------------------------------------------------------
 # Parsers (reuse the comma-string convention of kr_investor_flow._parse_*).
@@ -125,31 +125,6 @@ def _parse_vol_cheonju(s):
         return int(float(cleaned) * mult)
     except (ValueError, TypeError):
         return None
-
-
-def _direction_sign(compare_to_prev):
-    """compareToPreviousPrice dict → +1 / 0 / -1 (sign multiplier).
-
-    Falls back to the Korean text / English name when the code is unexpected.
-    Default +1 (up) when nothing is parseable — but callers cross-check against
-    the unsigned magnitude so a wrong default is self-evident in QA.
-    """
-    if not isinstance(compare_to_prev, dict):
-        return 1
-    code = str(compare_to_prev.get("code", "")).strip()
-    if code in _DOWN_CODES:
-        return -1
-    if code in _FLAT_CODES:
-        return 0
-    if code in ("1", "2"):
-        return 1
-    # Fallback: text / name.
-    text = str(compare_to_prev.get("text", "")) + str(compare_to_prev.get("name", ""))
-    if "하락" in text or "하한" in text or "FALLING" in text.upper() or "LOWER" in text.upper():
-        return -1
-    if "보합" in text or "STEADY" in text.upper() or "UNCHANGED" in text.upper():
-        return 0
-    return 1
 
 
 def _trade_date_from_iso(local_traded_at):
@@ -203,13 +178,17 @@ def _fetch_one_index(market):
     if close is None:
         logger.warning(f"kr_naver_quote index {market}: no closePrice")
         return None
-    sign = _direction_sign(basic.get("compareToPreviousPrice"))
-    change_pct_mag = _parse_num(basic.get("fluctuationsRatio"))
-    change_pct = None if change_pct_mag is None else round(sign * change_pct_mag, 2)
-    compare_mag = _parse_num(basic.get("compareToPreviousClosePrice"))
+    # Naver returns ALREADY-SIGNED values (verified live: fluctuationsRatio
+    # "-5.81", compareToPreviousClosePrice "-519.09" on a DOWN day). Trust them
+    # directly. The previous code multiplied by a separately-derived direction
+    # sign → DOUBLE-NEGATED down days (rendered UP) and broke prev_close.
+    change_pct = _parse_num(basic.get("fluctuationsRatio"))
+    if change_pct is not None:
+        change_pct = round(change_pct, 2)
+    signed_compare = _parse_num(basic.get("compareToPreviousClosePrice"))
     prev_close = None
-    if compare_mag is not None:
-        prev_close = round(close - sign * compare_mag, 2)
+    if signed_compare is not None:
+        prev_close = round(close - signed_compare, 2)
     base_date = _trade_date_from_iso(basic.get("localTradedAt"))
 
     # Volume lives in /integration totalInfos (거래량, 천주).
@@ -285,13 +264,15 @@ def _nxt_close_fields(basic):
     close = _parse_num(nxt.get("overPrice"))
     if close is None:
         return None
-    sign = _direction_sign(nxt.get("compareToPreviousPrice"))
-    change_pct_mag = _parse_num(nxt.get("fluctuationsRatio"))
-    change_pct = None if change_pct_mag is None else round(sign * change_pct_mag, 2)
-    compare_mag = _parse_num(nxt.get("compareToPreviousClosePrice"))
+    # Naver NXT fields are ALREADY-SIGNED (same as the regular session) — trust
+    # them directly; do NOT re-apply a direction sign (would double-negate).
+    change_pct = _parse_num(nxt.get("fluctuationsRatio"))
+    if change_pct is not None:
+        change_pct = round(change_pct, 2)
+    signed_compare = _parse_num(nxt.get("compareToPreviousClosePrice"))
     prev_close = None
-    if compare_mag is not None:
-        prev_close = int(round(close - sign * compare_mag))
+    if signed_compare is not None:
+        prev_close = int(round(close - signed_compare))
     # base_date: NXT localTradedAt is the same trading day as the KRX session;
     # prefer it but fall back to the basic-level date below if absent.
     base_date = _trade_date_from_iso(nxt.get("localTradedAt"))
@@ -318,13 +299,15 @@ def _fetch_one_stock(code):
     if close is None:
         logger.warning(f"kr_naver_quote stock {code}: no closePrice")
         return None
-    sign = _direction_sign(basic.get("compareToPreviousPrice"))
-    change_pct_mag = _parse_num(basic.get("fluctuationsRatio"))
-    change_pct = None if change_pct_mag is None else round(sign * change_pct_mag, 2)
-    compare_mag = _parse_num(basic.get("compareToPreviousClosePrice"))
+    # Naver returns ALREADY-SIGNED values — trust them directly (see
+    # _fetch_one_index). Do NOT re-apply a direction sign (double-negation bug).
+    change_pct = _parse_num(basic.get("fluctuationsRatio"))
+    if change_pct is not None:
+        change_pct = round(change_pct, 2)
+    signed_compare = _parse_num(basic.get("compareToPreviousClosePrice"))
     prev_close = None
-    if compare_mag is not None:
-        prev_close = int(round(close - sign * compare_mag))
+    if signed_compare is not None:
+        prev_close = int(round(close - signed_compare))
     base_date = _trade_date_from_iso(basic.get("localTradedAt"))
     market = _market_from_exchange(basic.get("stockExchangeType"))
 
