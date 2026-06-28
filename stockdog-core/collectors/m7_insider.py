@@ -113,6 +113,46 @@ def _normalize_cik10(cik: str) -> str:
     return digits.zfill(10)
 
 
+def _extract_issuer_cik(xml_text: str, accession: str) -> Optional[str]:
+    """Extract issuer CIK from Form 4 XML.
+
+    Form 4 XML structure:
+      <ownershipDocument>
+        <issuer>
+          <issuerCik>1234567890</issuerCik>
+          ...
+        </issuer>
+        ...
+      </ownershipDocument>
+
+    Returns: issuer CIK as int string (no leading zeros), or None if not found.
+    """
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError as e:
+        logger.warning(f"Form 4 XML parse failed in issuer extraction [{accession}]: {e}")
+        return None
+
+    issuer_el = root.find(".//issuer")
+    if issuer_el is None:
+        logger.warning(f"[{accession}] No <issuer> element found in Form 4 XML")
+        return None
+
+    issuer_cik_el = issuer_el.find("issuerCik")
+    if issuer_cik_el is None or not issuer_cik_el.text:
+        logger.warning(f"[{accession}] No issuerCik in <issuer> element")
+        return None
+
+    issuer_cik_str = issuer_cik_el.text.strip()
+    # Normalize to int string (remove leading zeros for comparison)
+    try:
+        issuer_cik_int = str(int(issuer_cik_str))
+        return issuer_cik_int
+    except ValueError:
+        logger.warning(f"[{accession}] Invalid issuerCik value: {issuer_cik_str}")
+        return None
+
+
 def _verify_cik_symbol(submissions_json: Dict[str, Any], expected_symbol: str) -> bool:
     """submissions.json의 tickers 배열에 expected_symbol이 있는지 확인.
 
@@ -247,7 +287,8 @@ def _parse_form4_xml(xml_text: str, accession: str) -> Dict[str, Any]:
         value_usd (market USD, headline),
         market_shares, market_value_usd, nonmarket_shares, nonmarket_value_usd,
         tx_codes (sorted list of all transactionCodes seen),
-        price_footnoted (bool, if any market row had price<=0)
+        price_footnoted (bool, if any market row had price<=0),
+        issuer_cik (str or None, extracted from Form 4 XML for issuer validation)
       }
     """
     out: Dict[str, Any] = {
@@ -266,12 +307,16 @@ def _parse_form4_xml(xml_text: str, accession: str) -> Dict[str, Any]:
         "nonmarket_value_usd": 0.0,
         "tx_codes": [],
         "price_footnoted": False,
+        "issuer_cik": None,
     }
     try:
         root = ET.fromstring(xml_text)
     except ET.ParseError as e:
         logger.warning(f"Form 4 XML parse failed [{accession}]: {e}")
         return out
+
+    # Extract issuer CIK for validation
+    out["issuer_cik"] = _extract_issuer_cik(xml_text, accession)
 
     # ownership document — element 이름은 namespace 없는 경우가 일반적
     # reportingOwner/reportingOwnerId/rptOwnerName
@@ -425,12 +470,17 @@ def collect_insider_for_ticker(
 ) -> Dict[str, Any]:
     """단일 ticker insider 수집.
 
+    ISSUER-CIK GATE: Only includes Form 4s where the filing's issuer CIK matches
+    the expected issuer CIK for this ticker. This prevents cross-contamination where
+    a company (e.g. Google Ventures) is a reporting owner in filings for OTHER companies.
+
     Returns:
       {
         "ticker": ticker,
-        "transactions": [tx_dict, ...],   # dedupe by accession
+        "transactions": [tx_dict, ...],   # dedupe by accession, issuer-gate applied
         "verified_cik": bool,             # tickers 배열에 symbol 매칭됐는지
         "filings_scanned": int,
+        "filings_issuer_rejected": int,   # filings filtered out by issuer CIK gate
         "error": str | None,
       }
     """
@@ -455,11 +505,13 @@ def collect_insider_for_ticker(
         "transactions": [],
         "verified_cik": False,
         "filings_scanned": 0,
+        "filings_issuer_rejected": 0,
         "error": None,
     }
 
     cik10 = _normalize_cik10(cik)
     cik_int = str(int(cik10))  # leading zero 제거 → archives URL용
+    expected_issuer_cik = cik_int  # Expected issuer CIK for this ticker
 
     submissions = _fetch_submissions(cik10, headers, max_retries, backoff_sec, pause_sec)
     if submissions is None:
@@ -498,6 +550,17 @@ def collect_insider_for_ticker(
         if not xml_text:
             continue
         tx = _parse_form4_xml(xml_text, accession)
+
+        # ISSUER-CIK GATE: Check if this filing's actual issuer matches the expected ticker
+        filing_issuer_cik = tx.get("issuer_cik")
+        if filing_issuer_cik and filing_issuer_cik != expected_issuer_cik:
+            logger.warning(
+                f"[{ticker}] {accession} issuer CIK mismatch: "
+                f"expected {expected_issuer_cik}, got {filing_issuer_cik} (likely reporting owner, not issuer) — REJECTED"
+            )
+            result["filings_issuer_rejected"] += 1
+            continue
+
         # transaction date 없으면 filing_date로 폴백
         if not tx.get("date"):
             tx["date"] = filing_date
@@ -516,6 +579,7 @@ def collect_all(cfg: Dict[str, Any], today: Optional[date] = None) -> Dict[str, 
         "by_ticker": {ticker: result_dict},
         "errors": {ticker: error_str},
         "filings_total": int,
+        "filings_issuer_rejected_total": int,
         "transactions_total": int,
       }
     """
@@ -524,6 +588,7 @@ def collect_all(cfg: Dict[str, Any], today: Optional[date] = None) -> Dict[str, 
     by_ticker: Dict[str, Any] = {}
     errors: Dict[str, str] = {}
     filings_total = 0
+    filings_issuer_rejected_total = 0
     transactions_total = 0
 
     for t in get_tickers(cfg):
@@ -535,6 +600,7 @@ def collect_all(cfg: Dict[str, Any], today: Optional[date] = None) -> Dict[str, 
             res = collect_insider_for_ticker(symbol, cik, cfg, min_value_usd, today=today)
             by_ticker[symbol] = res
             filings_total += res.get("filings_scanned", 0)
+            filings_issuer_rejected_total += res.get("filings_issuer_rejected", 0)
             transactions_total += len(res.get("transactions", []))
             if res.get("error"):
                 errors[symbol] = res["error"]
@@ -546,6 +612,7 @@ def collect_all(cfg: Dict[str, Any], today: Optional[date] = None) -> Dict[str, 
                 "transactions": [],
                 "verified_cik": False,
                 "filings_scanned": 0,
+                "filings_issuer_rejected": 0,
                 "error": f"crash: {e}",
             }
 
@@ -553,5 +620,6 @@ def collect_all(cfg: Dict[str, Any], today: Optional[date] = None) -> Dict[str, 
         "by_ticker": by_ticker,
         "errors": errors,
         "filings_total": filings_total,
+        "filings_issuer_rejected_total": filings_issuer_rejected_total,
         "transactions_total": transactions_total,
     }
