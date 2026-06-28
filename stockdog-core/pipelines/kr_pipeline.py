@@ -24,6 +24,7 @@ from collectors.kr_investor_flow import (
 )
 from collectors.kr_breadth import fetch_market_breadth
 from collectors.kr_sectors import fetch_kr_sectors
+from collectors.kr_after_hours import fetch_after_hours
 from collectors.kr_calendar import get_kr_calendar
 from collectors.kr_index_history import fetch_index_history
 from collectors.exchange_rates import get_exchange_rates
@@ -137,6 +138,12 @@ class KRPipeline(MarketPipeline):
             k7_codes = k7_codes[:1]
             print(f"[SAMPLE] kr_stocks={[i['ticker'] for i in kr_stock_items]}")
 
+        # 시간외(NXT) 급변동 universe (P2/Phase D): K7 대형주 + 관심종목(watchlist)
+        # codes, deduped (built AFTER the --sample slice so a sample run stays
+        # light). fetch_after_hours is tolerant → never aborts the pipeline.
+        ah_codes = list(k7_codes) + [str(it['ticker']) for it in kr_stock_items
+                                     if it.get('ticker')]
+
         # investor_flows is a best-effort 4th key (P2 of the 국장/KR page).
         # fetch_market_investor_flows() is fully tolerant (returns None, never
         # raises) so it can NEVER abort the pipeline.
@@ -174,6 +181,11 @@ class KRPipeline(MarketPipeline):
             # 종목수 from the SAME free Naver mobile host. Tolerant (returns None,
             # never raises) so it can NEVER abort the pipeline.
             'kr_sectors': fetch_kr_sectors(),
+            # 시간외(NXT) 급변동 (P2/Phase D): NXT 20:00 단일가 vs 정규장 종가 등락
+            # for the K7+watchlist universe, from the SAME free Naver /basic host.
+            # Tolerant (returns None / empty items, never raises) → can NEVER abort
+            # the pipeline. On a weekend it serves the last settled session.
+            'kr_after_hours': fetch_after_hours(ah_codes),
             'kr_index_history': fetch_index_history(),
             'kr_k7_foreign_streaks': fetch_foreign_streaks(k7_codes) if k7_codes else {},
             # 주요 일정 (P2/Phase D): upcoming 금통위/네마녀/MSCI events. PURE date

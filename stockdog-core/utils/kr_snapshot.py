@@ -353,6 +353,15 @@ def build_kr_snapshot(data, *, updated, data_date=None,
     calendar_in = (data or {}).get("kr_calendar")
     calendar = calendar_in if isinstance(calendar_in, dict) else None
 
+    # ---- 시간외(NXT) 급변동 (P2/Phase D) — kr_after_hours passthrough ----
+    # data['kr_after_hours'] is a best-effort {"data_date","session","items":[...]}
+    # dict from collectors.kr_after_hours (NXT 20:00 단일가 vs 정규장 종가). Pass it
+    # through as-is. Tolerant: a missing/non-dict source degrades to None → the
+    # emitter hides the card; a present block with empty items → graceful
+    # "데이터 없음" empty-state.
+    after_hours_in = (data or {}).get("kr_after_hours")
+    after_hours = after_hours_in if isinstance(after_hours_in, dict) else None
+
     return {
         "updated": updated,
         "data_date": data_date,
@@ -377,6 +386,11 @@ def build_kr_snapshot(data, *, updated, data_date=None,
         # or None. FUTURE-only 금통위/네마녀/MSCI events; the emitter recomputes
         # D-N at build time and renders the card only when events is non-empty.
         "calendar": calendar,
+        # 시간외(NXT) 급변동 (P2/Phase D): {data_date, session, items:[{name,code,
+        # reg_close, nxt_price, change_pct(NXT vs 정규 종가, signed), volume}]} or
+        # None. The emitter renders the 시간외 card when present (empty items → a
+        # graceful empty-state; absent → hidden).
+        "after_hours": after_hours,
         # P3-A (K7 대형주): per-stock price + 수급 direction (주). [] when
         # unavailable; the emitter renders the block only when non-empty.
         "k7": k7,
