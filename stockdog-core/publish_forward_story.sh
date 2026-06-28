@@ -138,7 +138,7 @@ git commit -m "Forward story $DATE ($GENERATOR)" || {
 
 # ---- Step 9: Push (always exit 0 on the publish path; failed push is logged but non-fatal)
 echo "[publish_forward_story.sh] pushing to master..."
-if git push "https://${GITHUB_PAT}@github.com/sungho-seo/skyler.git" master 2>&1; then
+if git push origin master 2>&1; then
     send_telegram "📤 *Forward story published*\nDate: $DATE\nGenerator: $GENERATOR"
     echo "[publish_forward_story.sh] ✅ forward story published: $DATE ($GENERATOR)"
     exit 0
