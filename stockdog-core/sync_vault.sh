@@ -303,8 +303,10 @@ fi
 
 git commit -m "Daily report $DATE"
 
-# Push to master branch using GITHUB_PAT
-if git push "https://${GITHUB_PAT}@github.com/sungho-seo/skyler.git" master 2>&1; then
+# Push to master via SSH origin (was an expired hardcoded HTTPS PAT — same dead
+# token as publish_forward_story.sh; fixed 2026-06-29). SSH key already works for
+# every other push on this host.
+if git push origin master 2>&1; then
     # MUTED 2026-06-29 per user: routine-ops housekeeping = spam (keep ALERT/BRIEF/PUBLISH). Re-enable by uncommenting.
     # send_telegram "📤 *Vault synced*\n\`raw/stockdog/daily-market/$DATE\` → GitHub"
     echo "✅ Vault synced: $DATE"
