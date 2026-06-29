@@ -34,6 +34,7 @@ from narrative_common import (
     log, _WallClockTimeout, _alarm_handler,
     check_idempotent,
     extract_macro_excerpt,
+    extract_sector_snapshot,
     get_llm, write_output, check_forbidden_words,
     set_wall_clock, cancel_wall_clock,
     extract_json_from_response,
@@ -64,7 +65,11 @@ PREVIEW_SYSTEM_PROMPT = """당신은 한국 일반 대중 독자를 위한 주�
 - ✓ "FOMC 회의가 목요일 예정되어 있음"
 - ✗ "FOMC가 긴축할 예상이므로 기술주 약세"
 
-모든 내용은 정보·교육·참고용입니다.
+**섹터/테마 진입 모멘텀**:
+[소스4] 섹터/테마 로테이션 데이터를 기반으로 진입 모멘텀(지난 1개월+1주 가중 흐름)만 서술 — 이번 주 방향성 예측 금지.
+테마 주장은 반드시 데이터 근거, ETF 티커 노출 금지.
+
+모든 내용은 정보·교육·참고용입니다. 지난 흐름의 기록이며 이번 주를 예단하지 않습니다.
 
 **출력 형식**: 유효한 JSON 객체 하나만 출력 (코드 펜스·인사말·설명 텍스트 없이). 모든 텍스트 한국어.
 
@@ -105,7 +110,10 @@ PREVIEW_HUMAN_TEMPLATE = """이번 주(월요일 시작) 미국 시장 전망을
 {positioning_list}
 {positioning_overflow_marker}
 
-[소스4 — 지켜볼 테마 (지난주 주간 분석에서 carry forward)]
+[소스4 — 섹터/테마 진입 모멘텀]
+{sector_context}
+
+[소스5 — 지켜볼 테마 (지난주 주간 분석에서 carry forward)]
 {themes_context}
 
 위 스키마대로 유효한 JSON 객체 하나만 출력하세요."""
@@ -397,6 +405,7 @@ def main() -> int:
     macro_excerpt = extract_macro_excerpt(notes_root)
     positioning_marker = f"\n(+{overflow}개 종목 추가 관찰 → /trackers/signals)" if overflow > 0 else ""
     themes_text = _format_themes_from_archive(notes_root)
+    sector_context = extract_sector_snapshot(notes_root, data_as_of, mode="preview", stale_days=4)
 
     # ── LLM import (ONLY here — after all gates pass) ────────────────────────
     llm = get_llm()
@@ -428,6 +437,7 @@ def main() -> int:
                 "macro_position": macro_excerpt,
                 "positioning_list": positioning_text,
                 "positioning_overflow_marker": positioning_marker,
+                "sector_context": sector_context,
                 "themes_context": themes_text,
             })
             raw_text = (resp.content or "").strip()

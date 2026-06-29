@@ -248,6 +248,121 @@ def extract_fear_greed(notes_root: Path, run_date: str) -> str:
     return json.dumps(scalar, ensure_ascii=False, indent=2)
 
 
+def extract_sector_snapshot(notes_root: Path, ref_date: str, *, mode: str, stale_days: int) -> str:
+    """Extract sector/theme rotation context for weekly/preview narratives.
+
+    Reads sectors_snapshot.json and builds a Korean-language grounding string.
+    Returns placeholder "(섹터 데이터 없음)" on any failure.
+
+    Args:
+        notes_root: Path to vault root
+        ref_date: Reference date (YYYY-MM-DD) to check staleness against asof
+        mode: "weekly" or "preview" — determines emphasis (d5 vs d1mo+d5 momentum)
+        stale_days: Threshold in calendar days; if snapshot older, add staleness label
+
+    Returns:
+        Korean grounding string listing top-3 and weakest-1 sectors + top theme(s),
+        with staleness marker if applicable.
+    """
+    # English → Korean GICS sector name map
+    _GICS_TO_KR = {
+        "Technology": "기술",
+        "Communication": "커뮤니케이션",
+        "Consumer Discretionary": "경기소비재",
+        "Consumer Staples": "필수소비재",
+        "Energy": "에너지",
+        "Financials": "금융",
+        "Healthcare": "헬스케어",
+        "Industrials": "산업재",
+        "Materials": "소재",
+        "Utilities": "유틸리티",
+        "Real Estate": "리츠",
+    }
+
+    snapshot_path = notes_root / "raw" / "stockdog" / "sectors" / "sectors_snapshot.json"
+    if not snapshot_path.is_file():
+        return "(섹터 데이터 없음)"
+
+    try:
+        snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return "(섹터 데이터 없음)"
+
+    asof = snapshot.get("asof")
+    if not asof:
+        return "(섹터 데이터 없음)"
+
+    sectors = snapshot.get("sectors", [])
+    themes = snapshot.get("themes", [])
+
+    if not sectors:
+        return "(섹터 데이터 없음)"
+
+    # Check staleness
+    staleness_prefix = ""
+    try:
+        asof_date = datetime.strptime(asof, "%Y-%m-%d").date()
+        ref_date_obj = datetime.strptime(ref_date, "%Y-%m-%d").date()
+        days_old = (ref_date_obj - asof_date).days
+        if days_old > stale_days:
+            staleness_prefix = f"※ 기준일 {asof} (다소 지연) — "
+    except (ValueError, Exception):
+        pass  # If date parsing fails, skip staleness marker
+
+    # Sort sectors by momentum (desc), filter out null momentum
+    sectors_sorted = [s for s in sectors if s.get("momentum") is not None]
+    sectors_sorted.sort(key=lambda x: -x.get("momentum", 0))
+
+    # Extract top-3 and weakest-1 (last in sorted DESC list)
+    top_3 = sectors_sorted[:3]
+    weakest_1 = [sectors_sorted[-1]] if sectors_sorted else []
+
+    lines = [staleness_prefix + "섹터·테마 로테이션:"]
+
+    # Add top-3 sectors
+    if top_3:
+        lines.append("선도:")
+        for s in top_3:
+            kr_name = _GICS_TO_KR.get(s.get("name", ""), s.get("name", ""))
+            d5 = s.get("d5")
+            d1mo = s.get("d1mo")
+            if mode == "weekly":
+                # Weekly: emphasize d5 (지난 1주)
+                lines.append(f"  · {kr_name} ({d5:+.1f}% 1주, {d1mo:+.1f}% 월)")
+            else:  # preview
+                # Preview: emphasize d1mo + d5 as entering momentum
+                lines.append(f"  · {kr_name} (진입모멘텀 {d1mo:+.1f}% 월 / {d5:+.1f}% 1주)")
+
+    # Add weakest-1 sector
+    if weakest_1:
+        lines.append("부진:")
+        for s in weakest_1:
+            kr_name = _GICS_TO_KR.get(s.get("name", ""), s.get("name", ""))
+            d5 = s.get("d5")
+            d1mo = s.get("d1mo")
+            lines.append(f"  · {kr_name} ({d5:+.1f}% 1주, {d1mo:+.1f}% 월)")
+
+    # Sort themes by momentum (desc), filter out null momentum
+    themes_sorted = [t for t in themes if t.get("momentum") is not None]
+    themes_sorted.sort(key=lambda x: -x.get("momentum", 0))
+
+    # Add top theme(s) — keep themes that are already Korean and have momentum >= 0
+    top_themes = [t for t in themes_sorted if t.get("momentum", -999) >= 0][:1]
+    if top_themes:
+        lines.append("테마:")
+        for t in top_themes:
+            # Theme names are already Korean (반도체, 소프트웨어, etc.)
+            kr_name = t.get("name", "")
+            d5 = t.get("d5")
+            d1mo = t.get("d1mo")
+            if mode == "weekly":
+                lines.append(f"  · {kr_name} ({d5:+.1f}% 1주, {d1mo:+.1f}% 월)")
+            else:  # preview
+                lines.append(f"  · {kr_name} (진입모멘텀 {d1mo:+.1f}% 월 / {d5:+.1f}% 1주)")
+
+    return "\n".join(lines)
+
+
 def extract_signals_excerpt(notes_root: Path) -> str:
     """Return signals tracker excerpt: context line + 주요시그널 + 관찰 top~5 + 요약표.
 

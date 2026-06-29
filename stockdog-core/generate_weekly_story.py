@@ -33,6 +33,7 @@ from narrative_common import (
     log, _WallClockTimeout, _alarm_handler,
     check_report_exists, check_idempotent,
     extract_report_sections, extract_macro_excerpt,
+    extract_sector_snapshot,
     get_llm, write_output, check_forbidden_words,
     set_wall_clock, cancel_wall_clock,
     alert_generation_failure,
@@ -217,6 +218,7 @@ WEEKLY_SYSTEM_PROMPT = """당신은 한국 일반 대중 독자를 위한 주간
 ② 지난 한 주의 큰 흐름에만 집중 — 세부 종목 개별 움직임보다는 섹터·심리·거시 회고
 ③ 과잉 인과 — 단정 대신 "~로 보입니다", "~와 맞물려" 등 관찰 표현 사용
 ④ 소스에 없는 이벤트·실적·제품 날조 절대 금지
+⑤ 섹터/테마 회전 주장은 반드시 [소스4] 데이터로 근거 — 창의적 테마 투사 금지, 관찰만 (선도/부진/모멘텀/기록 OK), ETF 티커 노출 금지
 
 **주간 톤 개선(analyst 권고)**:
 ⑤ 주간 회고는 데일리보다 절제된 톤 — "급락", "폭락", "패닉" 같은 자극적 표현은 한 주에 1회 이내. 반복 시 "큰 폭의 하락", "조정", "낙폭 확대" 등으로 변주
@@ -258,6 +260,9 @@ WEEKLY_HUMAN_TEMPLATE = """지난 한 주(주간 기준: 월요~토요)의 미�
 
 [소스3 — 주간 M7 (Apple, Microsoft, Google, Amazon, Meta, NVIDIA, Tesla) 회고]
 {m7_weekly_context}
+
+[소스4 — 섹터/테마 로테이션]
+{sector_context}
 
 위 스키마대로 유효한 JSON 객체 하나만 출력하세요."""
 
@@ -314,6 +319,7 @@ def main() -> int:
     daily_reports_text = "\n\n---\n\n".join([f"[{date}]\n{excerpt}" for date, excerpt in reports])
     macro_weekly = _extract_macro_weekly(notes_root, week_dates)
     m7_weekly_context = _build_weekly_m7_context(notes_root, week_dates)
+    sector_context = extract_sector_snapshot(notes_root, sunday_date, mode="weekly", stale_days=3)
 
     # ── LLM import (ONLY here — after both gates pass) ─────────────────────
     llm = get_llm()
@@ -345,6 +351,7 @@ def main() -> int:
                 "daily_reports": daily_reports_text,
                 "macro_weekly": macro_weekly,
                 "m7_weekly_context": m7_weekly_context,
+                "sector_context": sector_context,
             })
             raw_text = (resp.content or "").strip()
         except _WallClockTimeout:
