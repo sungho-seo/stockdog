@@ -221,12 +221,9 @@ class USPipeline(MarketPipeline):
             fgi = data.get('indicators', {}).get('fear_and_greed', {})
             score = int(round(fgi.get('score', 0))) if fgi.get('score') else 'N/A'
             rating = fgi.get('rating', 'N/A').upper()
-            data_as_of = _us_data_as_of(data)
+            # 미장 리포트 → US 대시보드(가든 홈). 날짜 무관 정적 링크라 발행 지연/404 없음.
             msg = f"🇺🇸 *US Report Ready*\n\nFear & Greed: {score} ({rating})"
-            if data_as_of:
-                msg += f"\n🔗 https://blog.seosungho.com/daily-reports/{data_as_of}-us"
-            else:
-                msg += "\nDaily US report saved to vault."
+            msg += "\n🔗 https://blog.seosungho.com"
             send_telegram_message(msg)
         else:
             send_telegram_message("❌ US Pipeline analysis failed. Check server logs.")
