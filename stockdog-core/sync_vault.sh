@@ -305,7 +305,8 @@ git commit -m "Daily report $DATE"
 
 # Push to master branch using GITHUB_PAT
 if git push "https://${GITHUB_PAT}@github.com/sungho-seo/skyler.git" master 2>&1; then
-    send_telegram "📤 *Vault synced*\n\`raw/stockdog/daily-market/$DATE\` → GitHub"
+    # MUTED 2026-06-29 per user: routine-ops housekeeping = spam (keep ALERT/BRIEF/PUBLISH). Re-enable by uncommenting.
+    # send_telegram "📤 *Vault synced*\n\`raw/stockdog/daily-market/$DATE\` → GitHub"
     echo "✅ Vault synced: $DATE"
 
     # Sprint 1C — vault-web 자동 빌드 트리거 (post-hook).

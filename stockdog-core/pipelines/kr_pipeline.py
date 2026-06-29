@@ -313,8 +313,12 @@ class KRPipeline(MarketPipeline):
             usd_krw = data.get('exchange', {}).get('USD_KRW', {})
             rate = usd_krw.get('rate', 'N/A')
             change = usd_krw.get('change_pct', 0)
-            send_telegram_message(
-                f"🇰🇷 *KR Report Ready*\n\nUSD/KRW: {rate} ({change:+.2f}%)\nDaily KR report saved to vault."
-            )
+            data_as_of = _kr_data_as_of(data)
+            msg = f"🇰🇷 *KR Report Ready*\n\nUSD/KRW: {rate} ({change:+.2f}%)"
+            if data_as_of:
+                msg += f"\n🔗 https://blog.seosungho.com/daily-reports/{data_as_of}-kr"
+            else:
+                msg += "\nDaily KR report saved to vault."
+            send_telegram_message(msg)
         else:
             send_telegram_message("❌ KR Pipeline analysis failed. Check server logs.")

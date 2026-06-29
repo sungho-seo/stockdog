@@ -165,7 +165,8 @@ def run(cfg: Dict[str, Any], silent: bool = False) -> int:
         if signal_line:
             msg += signal_line
         else:
-            msg += "Insider/Short 시그널 발화. vault US 리포트 참조."
+            msg += "Insider/Short 시그널 발화."
+        msg += "\n🔗 https://blog.seosungho.com/trackers/m7"
         try:
             send_telegram_message(msg)
         except Exception as e:

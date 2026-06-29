@@ -106,6 +106,7 @@ def run(silent: bool = False) -> int:
                     lines.append(f"  {s['etf']} ({s['name']}) {s['momentum']:.2f}")
 
             msg = "\n".join(lines)
+            msg += "\n🔗 https://blog.seosungho.com/trackers/sectors"
             send_telegram_message(msg)
         except Exception as e:
             logger.warning(f"Telegram send failed (non-fatal): {e}")

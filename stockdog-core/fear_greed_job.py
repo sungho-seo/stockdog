@@ -73,7 +73,7 @@ def main(silent: bool = False):
     if silent:
         print("🔇 silent mode — skipping Telegram")
     else:
-        summary = f"📊 *Fear & Greed Index* (US Market Open)\n\nScore: *{int(round(score))}* ({rating.upper()})"
+        summary = f"📊 *Fear & Greed Index* (US Market Open)\n\nScore: *{int(round(score))}* ({rating.upper()})\n🔗 https://blog.seosungho.com/fear-greed"
         if gauge_path:
             send_telegram_photo(gauge_path, caption=summary)
         else:

@@ -221,8 +221,12 @@ class USPipeline(MarketPipeline):
             fgi = data.get('indicators', {}).get('fear_and_greed', {})
             score = int(round(fgi.get('score', 0))) if fgi.get('score') else 'N/A'
             rating = fgi.get('rating', 'N/A').upper()
-            send_telegram_message(
-                f"🇺🇸 *US Report Ready*\n\nFear & Greed: {score} ({rating})\nDaily US report saved to vault."
-            )
+            data_as_of = _us_data_as_of(data)
+            msg = f"🇺🇸 *US Report Ready*\n\nFear & Greed: {score} ({rating})"
+            if data_as_of:
+                msg += f"\n🔗 https://blog.seosungho.com/daily-reports/{data_as_of}-us"
+            else:
+                msg += "\nDaily US report saved to vault."
+            send_telegram_message(msg)
         else:
             send_telegram_message("❌ US Pipeline analysis failed. Check server logs.")
