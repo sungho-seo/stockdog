@@ -24,7 +24,7 @@ fi
 
 git commit -m "Summary sync $DATE"
 
-if git push "https://${GITHUB_PAT}@github.com/sungho-seo/skyler.git" master 2>&1; then
+if git push origin master 2>&1; then
     echo "✅ Summary synced: $DATE"
 else
     echo "❌ Push failed."

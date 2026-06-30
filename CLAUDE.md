@@ -140,7 +140,7 @@ Runs with `restart: always` via Docker. Uses Gemini API for analysis. Reads/writ
 - `ANTHROPIC_API_KEY` — fallback LLM
 - `GETXAPI_KEY` — Twitter/X data (REST API; **do not revert to `twscrape`/Selenium** — blocked by Cloudflare on server)
 - `BOT_TOKEN`, `CHAT_ID` — Telegram
-- `GITHUB_PAT` — skyler vault push (sync_vault.sh) + telebot vault access
+- `GITHUB_PAT` — telebot vault access (PyGithub API); vault push now uses SSH
 - `DATA_GO_KR_API_KEY` — 금융위 공공데이터포털 API (한국 주식/지수 시세)
 
 **Docker volume** (core): `../skyler/daily-market` → `/notes/daily-market`. The `config.yaml` is also bind-mounted so it can be updated without rebuilding the image.
