@@ -67,13 +67,36 @@ def _invoke(llm, system_instruction, human_message, data_dict, meta=None):
         return f"> [!error] Analysis Failed\n> {str(e)}"
 
 
-def analyze_us_market(data, meta=None):
+def analyze_us_market(data, meta=None, notes_root=None):
     """
     Generates a US market report from Twitter, indicators, us_market prices, and 13F data.
+
+    Args:
+        data: Dict with 'indicators', 'us_market', '13f', 'twitter', 'econ_calendar'
+        meta: Optional dict with 'report_date', 'data_as_of', 'data_freshness'
+        notes_root: Optional path to vault root (for sector snapshot extraction)
     """
     llm = get_llm()
     if not llm:
         return "Error: LLM not configured."
+
+    # Extract sector/theme grounding for daily report.
+    # Resolve notes_root from env when the caller doesn't pass it (matches
+    # sector_job's hard-coded /notes mount) so the block can never silently no-op.
+    notes_root = notes_root or os.environ.get("NOTES_ROOT", "/notes")
+    sector_theme_context = "(섹터 데이터 없음)"
+    if meta:
+        try:
+            from pathlib import Path
+            from narrative_common import extract_sector_snapshot
+            notes_root_path = Path(notes_root).expanduser()
+            data_as_of = meta.get("data_as_of", "")
+            sector_theme_context = extract_sector_snapshot(
+                notes_root_path, data_as_of, mode="daily", stale_days=2
+            )
+        except Exception as e:
+            logger.warning(f"Failed to extract sector snapshot: {e}")
+            # sector_theme_context stays as placeholder on any error
 
     system_instruction = """
 당신은 전문 미국 시장 분석가입니다. 제공된 데이터를 분석하여 한국어로 작성된 Obsidian Markdown 리포트를 생성하세요.
@@ -91,20 +114,31 @@ def analyze_us_market(data, meta=None):
 - 모든 본문 날짜 표기는 한국어 형식 `YYYY년 M월 D일` 사용 (frontmatter는 ISO 유지).
 - > [!summary] 첫 문장은 한국어 날짜 형식으로 시작 (예: `2026년 5월 18일 미국 증시는 …`).
 
+§ 섹터·테마 작성 규칙:
+- [소스3] 섹터·테마 데이터는 코드가 붙인 '지속'/'당일 한정' 태그만 근거로 서술하세요. 다른 persistence 주장 금지.
+- 당일 1일 등락만으로 '로테이션', '추세 전환' 표현 금지.
+- 추세 표현은 5일과 1개월 부호가 일치할 때만 허용.
+- 길이: 3~6 bullets 또는 짧은 1단락, 6줄 이내, 90자 이내 (한국어).
+- ETF 티커 노출 금지.
+
 리포트 구조 (이 순서와 한글 헤더를 정확히 따를 것):
 1. > [!summary] 시장 요약 — 오늘 미국 시장 전반적 흐름 (3-5문장). 첫 문장은 한국어 날짜 형식으로 시작.
 2. ## 시장 지표 — F&G, VIX, 10Y Yield 해석 포함
-3. ## 포트폴리오 스냅샷 — 미국 주식/ETF/지수 테이블 (컬럼: 종목 | 이름 | 가격 | 등락률 | 메모). 종목·이름은 영문 원문 유지.
-4. ## 인플루언서 심리 — Twitter 합의된 견해와 충돌된 견해.
+3. ## 섹터·테마 — 제공된 [소스3] 섹터·테마 데이터를 해석. 코드가 제공한 태그가 근거.
+   단, <Sector_Theme> 블록이 `(섹터 데이터 없음)`이면 이 섹션 본문은 생성하지 말고 헤더 아래에 다음 콜아웃 한 줄만 출력하세요:
+   `> [!info] 섹터 데이터 없음 — 이번 리포트에는 섹터·테마 스냅샷이 포함되지 않습니다.`
+   추정·예상·일반론으로 빈 자리를 채우지 마세요.
+4. ## 포트폴리오 스냅샷 — 미국 주식/ETF/지수 테이블 (컬럼: 종목 | 이름 | 가격 | 등락률 | 메모). 종목·이름은 영문 원문 유지.
+5. ## 인플루언서 심리 — Twitter 합의된 견해와 충돌된 견해.
    단, <Twitter> 블록이 비어있거나 `{{}}`이면 이 섹션 본문은 생성하지 말고 헤더 아래에 다음 콜아웃 한 줄만 출력하세요:
    `> [!info] Twitter 수집 비활성화 — 이번 리포트에는 인플루언서 시그널이 포함되지 않습니다.`
    추정·예상·일반론으로 빈 자리를 채우지 마세요.
-5. ## 기관 보유 (13F) — 종목별 상위 보유 기관 테이블. 기관명은 영문 원문 유지.
+6. ## 기관 보유 (13F) — 종목별 상위 보유 기관 테이블. 기관명은 영문 원문 유지.
    단, <13F> 블록이 비어있거나 `{{}}`이면 이 섹션 본문은 생성하지 말고 헤더 아래에 다음 콜아웃 한 줄만 출력하세요:
    `> [!info] 13F 수집 비활성화 — 이번 리포트에는 기관 보유 데이터가 포함되지 않습니다.`
    추정·예상·일반론으로 빈 자리를 채우지 마세요.
-6. ## 단기 전망 — 데이터 기반 2-3일 관찰 포인트
-7. ## 경제 캘린더 — 향후 7일 발표 일정 테이블 (컬럼: 날짜 | 이벤트 | D-Day | 이전값 | 컨센서스). releasing_today가 비어있지 않으면 > [!warning] 콜아웃으로 해당 이벤트와 잠재적 시장 영향을 명시.
+7. ## 단기 전망 — 데이터 기반 2-3일 관찰 포인트
+8. ## 경제 캘린더 — 향후 7일 발표 일정 테이블 (컬럼: 날짜 | 이벤트 | D-Day | 이전값 | 컨센서스). releasing_today가 비어있지 않으면 > [!warning] 콜아웃으로 해당 이벤트와 잠재적 시장 영향을 명시.
 """
 
     human_message = """Here is today's raw data:
@@ -118,6 +152,11 @@ data_freshness: {data_freshness}
 <Indicators>
 {indicators}
 </Indicators>
+
+<Sector_Theme>
+[소스3 — 섹터·테마]
+{sector_theme}
+</Sector_Theme>
 
 <US_Market>
 {us_market}
@@ -139,6 +178,7 @@ data_freshness: {data_freshness}
 
     return _invoke(llm, system_instruction, human_message, {
         "indicators": json.dumps(data.get('indicators', {}), indent=2),
+        "sector_theme": sector_theme_context,
         "us_market": json.dumps(data.get('us_market', {}), indent=2),
         "f13": json.dumps(data.get('13f', {}), indent=2),
         "twitter": json.dumps(data.get('twitter', {}), indent=2),

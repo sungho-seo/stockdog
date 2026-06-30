@@ -249,7 +249,7 @@ def extract_fear_greed(notes_root: Path, run_date: str) -> str:
 
 
 def extract_sector_snapshot(notes_root: Path, ref_date: str, *, mode: str, stale_days: int) -> str:
-    """Extract sector/theme rotation context for weekly/preview narratives.
+    """Extract sector/theme rotation context for daily/weekly/preview narratives.
 
     Reads sectors_snapshot.json and builds a Korean-language grounding string.
     Returns placeholder "(섹터 데이터 없음)" on any failure.
@@ -257,11 +257,11 @@ def extract_sector_snapshot(notes_root: Path, ref_date: str, *, mode: str, stale
     Args:
         notes_root: Path to vault root
         ref_date: Reference date (YYYY-MM-DD) to check staleness against asof
-        mode: "weekly" or "preview" — determines emphasis (d5 vs d1mo+d5 momentum)
+        mode: "daily", "weekly", or "preview" — determines emphasis and composition
         stale_days: Threshold in calendar days; if snapshot older, add staleness label
 
     Returns:
-        Korean grounding string listing top-3 and weakest-1 sectors + top theme(s),
+        Korean grounding string listing sectors + theme(s),
         with staleness marker if applicable.
     """
     # English → Korean GICS sector name map
@@ -309,6 +309,132 @@ def extract_sector_snapshot(notes_root: Path, ref_date: str, *, mode: str, stale
     except (ValueError, Exception):
         pass  # If date parsing fails, skip staleness marker
 
+    if mode == "daily":
+        return _extract_sector_snapshot_daily(
+            staleness_prefix, sectors, themes, _GICS_TO_KR
+        )
+    elif mode == "weekly":
+        return _extract_sector_snapshot_weekly(
+            staleness_prefix, sectors, themes, _GICS_TO_KR
+        )
+    else:  # preview
+        return _extract_sector_snapshot_preview(
+            staleness_prefix, sectors, themes, _GICS_TO_KR
+        )
+
+
+def _extract_sector_snapshot_daily(staleness_prefix: str, sectors: list, themes: list, gics_map: dict) -> str:
+    """Build daily sector/theme grounding string.
+
+    Composition order:
+    1. Header: "섹터·테마 (당일·5일·1개월):"
+    2. "선도(당일):": top-3 sectors by d1 desc
+    3. "부진(당일):": bottom-1 sector by d1 asc
+    4. "모멘텀 상위:": top-2 sectors by momentum desc (names only)
+    5. "테마:": themes with momentum >= 0 (max 3), sorted by momentum desc
+    """
+    lines = [staleness_prefix + "섹터·테마 (당일·5일·1개월):"]
+
+    # Compute rankings for tagging
+    # For each metric (d1, d5, d1mo), rank sectors
+    sectors_with_metrics = [s for s in sectors if s.get("d1") is not None]
+
+    # Rank by d1 desc
+    d1_ranked = sorted(sectors_with_metrics, key=lambda x: -x.get("d1", 0))
+    d1_top_third = set(s.get("name") for s in d1_ranked[:max(1, len(d1_ranked) // 3)])
+
+    # Rank by d5 desc
+    d5_ranked = sorted(sectors_with_metrics, key=lambda x: -x.get("d5", 0))
+    d5_top_third = set(s.get("name") for s in d5_ranked[:max(1, len(d5_ranked) // 3)])
+
+    # Rank by d1mo desc
+    d1mo_ranked = sorted(sectors_with_metrics, key=lambda x: -x.get("d1mo", 0))
+    d1mo_top_third = set(s.get("name") for s in d1mo_ranked[:max(1, len(d1mo_ranked) // 3)])
+
+    # Top-3 sectors by d1 desc
+    top_3_d1 = d1_ranked[:3]
+
+    lines.append("선도(당일):")
+    for s in top_3_d1:
+        kr_name = gics_map.get(s.get("name", ""), s.get("name", ""))
+        d1 = s.get("d1")
+        d5 = s.get("d5")
+        d1mo = s.get("d1mo")
+        sector_name = s.get("name", "")
+
+        # Compute tag
+        tag = _compute_daily_tag(sector_name, d1_top_third, d5_top_third, d1mo_top_third)
+
+        line = f"· {kr_name} (당일 {d1:+.1f}% / 5일 {d5:+.1f}% / 1개월 {d1mo:+.1f}%){tag}"
+        lines.append(line)
+
+    # Bottom-1 sector by d1 asc (weakest)
+    bottom_1_d1 = [d1_ranked[-1]] if d1_ranked else []
+
+    lines.append("부진(당일):")
+    for s in bottom_1_d1:
+        kr_name = gics_map.get(s.get("name", ""), s.get("name", ""))
+        d1 = s.get("d1")
+        d5 = s.get("d5")
+        d1mo = s.get("d1mo")
+
+        line = f"· {kr_name} (당일 {d1:+.1f}% / 5일 {d5:+.1f}% / 1개월 {d1mo:+.1f}%)"
+        lines.append(line)
+
+    # Top-2 sectors by momentum desc (leadership-by-trend)
+    sectors_with_momentum = [s for s in sectors if s.get("momentum") is not None]
+    sectors_by_momentum = sorted(sectors_with_momentum, key=lambda x: -x.get("momentum", 0))
+    top_2_momentum = sectors_by_momentum[:2]
+
+    if top_2_momentum:
+        momentum_line = "모멘텀 상위: "
+        momentum_names = []
+        for s in top_2_momentum:
+            kr_name = gics_map.get(s.get("name", ""), s.get("name", ""))
+            momentum_names.append(kr_name)
+        momentum_line += ", ".join(momentum_names)
+        lines.append(momentum_line)
+
+    # Themes with momentum >= 0 (max 3), sorted by momentum desc
+    themes_with_momentum = [t for t in themes if t.get("momentum") is not None and t.get("momentum", -999) >= 0]
+    themes_sorted = sorted(themes_with_momentum, key=lambda x: -x.get("momentum", 0))[:3]
+
+    if themes_sorted:
+        lines.append("테마:")
+        for t in themes_sorted:
+            kr_name = t.get("name", "")
+            d5 = t.get("d5")
+            d1mo = t.get("d1mo")
+            line = f"· {kr_name} (5일 {d5:+.1f}% / 1개월 {d1mo:+.1f}%)"
+            lines.append(line)
+
+    return "\n".join(lines)
+
+
+def _compute_daily_tag(sector_name: str, d1_top_third: set, d5_top_third: set, d1mo_top_third: set) -> str:
+    """Compute persistence tag for daily sector.
+
+    Returns:
+    - " — 지속(당일·5일·1개월 모두 상위)" if in top-third for ALL three horizons
+    - " — 당일 한정(되돌림 가능)" if in top-third for d1 but NOT both d5 AND d1mo
+    - "" otherwise
+    """
+    in_d1 = sector_name in d1_top_third
+    in_d5 = sector_name in d5_top_third
+    in_d1mo = sector_name in d1mo_top_third
+
+    if in_d1 and in_d5 and in_d1mo:
+        return " — 지속(당일·5일·1개월 모두 상위)"
+    elif in_d1 and not (in_d5 and in_d1mo):
+        return " — 당일 한정(되돌림 가능)"
+    else:
+        return ""
+
+
+def _extract_sector_snapshot_weekly(staleness_prefix: str, sectors: list, themes: list, gics_map: dict) -> str:
+    """Build weekly sector/theme grounding string (existing logic)."""
+    lines = [staleness_prefix + "섹터·테마 로테이션:"]
+
     # Sort sectors by momentum (desc), filter out null momentum
     sectors_sorted = [s for s in sectors if s.get("momentum") is not None]
     sectors_sorted.sort(key=lambda x: -x.get("momentum", 0))
@@ -317,27 +443,21 @@ def extract_sector_snapshot(notes_root: Path, ref_date: str, *, mode: str, stale
     top_3 = sectors_sorted[:3]
     weakest_1 = [sectors_sorted[-1]] if sectors_sorted else []
 
-    lines = [staleness_prefix + "섹터·테마 로테이션:"]
-
     # Add top-3 sectors
     if top_3:
         lines.append("선도:")
         for s in top_3:
-            kr_name = _GICS_TO_KR.get(s.get("name", ""), s.get("name", ""))
+            kr_name = gics_map.get(s.get("name", ""), s.get("name", ""))
             d5 = s.get("d5")
             d1mo = s.get("d1mo")
-            if mode == "weekly":
-                # Weekly: emphasize d5 (지난 1주)
-                lines.append(f"  · {kr_name} ({d5:+.1f}% 1주, {d1mo:+.1f}% 월)")
-            else:  # preview
-                # Preview: emphasize d1mo + d5 as entering momentum
-                lines.append(f"  · {kr_name} (진입모멘텀 {d1mo:+.1f}% 월 / {d5:+.1f}% 1주)")
+            # Weekly: emphasize d5 (지난 1주)
+            lines.append(f"  · {kr_name} ({d5:+.1f}% 1주, {d1mo:+.1f}% 월)")
 
     # Add weakest-1 sector
     if weakest_1:
         lines.append("부진:")
         for s in weakest_1:
-            kr_name = _GICS_TO_KR.get(s.get("name", ""), s.get("name", ""))
+            kr_name = gics_map.get(s.get("name", ""), s.get("name", ""))
             d5 = s.get("d5")
             d1mo = s.get("d1mo")
             lines.append(f"  · {kr_name} ({d5:+.1f}% 1주, {d1mo:+.1f}% 월)")
@@ -355,10 +475,56 @@ def extract_sector_snapshot(notes_root: Path, ref_date: str, *, mode: str, stale
             kr_name = t.get("name", "")
             d5 = t.get("d5")
             d1mo = t.get("d1mo")
-            if mode == "weekly":
-                lines.append(f"  · {kr_name} ({d5:+.1f}% 1주, {d1mo:+.1f}% 월)")
-            else:  # preview
-                lines.append(f"  · {kr_name} (진입모멘텀 {d1mo:+.1f}% 월 / {d5:+.1f}% 1주)")
+            lines.append(f"  · {kr_name} ({d5:+.1f}% 1주, {d1mo:+.1f}% 월)")
+
+    return "\n".join(lines)
+
+
+def _extract_sector_snapshot_preview(staleness_prefix: str, sectors: list, themes: list, gics_map: dict) -> str:
+    """Build preview sector/theme grounding string (existing logic)."""
+    lines = [staleness_prefix + "섹터·테마 로테이션:"]
+
+    # Sort sectors by momentum (desc), filter out null momentum
+    sectors_sorted = [s for s in sectors if s.get("momentum") is not None]
+    sectors_sorted.sort(key=lambda x: -x.get("momentum", 0))
+
+    # Extract top-3 and weakest-1 (last in sorted DESC list)
+    top_3 = sectors_sorted[:3]
+    weakest_1 = [sectors_sorted[-1]] if sectors_sorted else []
+
+    # Add top-3 sectors
+    if top_3:
+        lines.append("선도:")
+        for s in top_3:
+            kr_name = gics_map.get(s.get("name", ""), s.get("name", ""))
+            d5 = s.get("d5")
+            d1mo = s.get("d1mo")
+            # Preview: emphasize d1mo + d5 as entering momentum
+            lines.append(f"  · {kr_name} (진입모멘텀 {d1mo:+.1f}% 월 / {d5:+.1f}% 1주)")
+
+    # Add weakest-1 sector
+    if weakest_1:
+        lines.append("부진:")
+        for s in weakest_1:
+            kr_name = gics_map.get(s.get("name", ""), s.get("name", ""))
+            d5 = s.get("d5")
+            d1mo = s.get("d1mo")
+            lines.append(f"  · {kr_name} ({d5:+.1f}% 1주, {d1mo:+.1f}% 월)")
+
+    # Sort themes by momentum (desc), filter out null momentum
+    themes_sorted = [t for t in themes if t.get("momentum") is not None]
+    themes_sorted.sort(key=lambda x: -x.get("momentum", 0))
+
+    # Add top theme(s) — keep themes that are already Korean and have momentum >= 0
+    top_themes = [t for t in themes_sorted if t.get("momentum", -999) >= 0][:1]
+    if top_themes:
+        lines.append("테마:")
+        for t in top_themes:
+            # Theme names are already Korean (반도체, 소프트웨어, etc.)
+            kr_name = t.get("name", "")
+            d5 = t.get("d5")
+            d1mo = t.get("d1mo")
+            lines.append(f"  · {kr_name} (진입모멘텀 {d1mo:+.1f}% 월 / {d5:+.1f}% 1주)")
 
     return "\n".join(lines)
 
