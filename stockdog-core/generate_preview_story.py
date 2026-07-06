@@ -42,7 +42,7 @@ from narrative_common import (
     alert_generation_failure,
     SCHEMA_VERSION,
 )
-from render_signals_tracker import compute_scored_flags, SCORE_WATCH
+from render_signals_tracker import compute_scored_flags, SCORE_WATCH, load_watchlist_snapshot
 from collectors.economic_calendar import get_economic_calendar
 
 LOG = "[generate_preview_story]"
@@ -50,6 +50,8 @@ LLM_WALL_CLOCK_SECONDS = 120
 
 # Preview-specific constants
 PREVIEW_TOP_N = 7
+# M7 관전 포인트 — canonical order (fixed, not scored/ranked by LLM)
+PREVIEW_M7_TICKERS = ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "TSLA"]
 PREVIEW_SYSTEM_PROMPT = """당신은 한국 일반 대중 독자를 위한 주간 시장 프리뷰 이야기꾼입니다. 이번 주를 미리 살펴보는 관점에서 씁니다. 어려운 금융 용어는 비유로 풀고, 친근하지만 신뢰감 있는 톤으로 씁니다.
 
 **절대 금지**:
@@ -91,11 +93,30 @@ PREVIEW_SYSTEM_PROMPT = """당신은 한국 일반 대중 독자를 위한 주�
   "themes": [
     {{"title": "테마명", "story": "이번 주 주목할 테마 설명 1~2문장"}}
   ],
+  "m7_preview": [
+    {{"ticker": "AAPL", "watch": "이번 주 무엇을 관찰할지 1~2문장 (제공된 팩트만 사용)"}}
+  ],
   "data_as_of": "2026-06-13"
 }}
 
 calendar는 배열; consensus는 항상 "예상치 없음" (숫자 절대 금지). positioning_overflow는 N > PREVIEW_TOP_N일 때 카운트.
 positioning은 이미 카운트된 데이터(LLM이 스코어/랭크하지 않음) — 그대로 서술하기.
+
+**m7_preview 규칙 (M7 이번 주 관전 포인트)**:
+[소스6 — M7 관전 포인트 팩트]를 그대로 활용해, M7 7개 종목 각각에 대해 "이번 주 무엇을 지켜볼지"를 관찰 관점으로 씁니다.
+- 배열에 정확히 7개, 캐논 순서 그대로: AAPL, MSFT, GOOGL, AMZN, META, NVDA, TSLA.
+- 각 watch: 1~2문장, **한국어 100자 이내(하드 상한 110자)** — 반드시 지킬 것. **관찰 서술만** — 이번 주 무엇을 지켜볼지.
+- **길이·간결(중요)**: 팩트 줄에 신호가 여러 개인 종목(예: 내부자 클러스터 + 공매도)은 전부 나열하지 말 것. 가장 강한 신호 하나를 앞세우고(우선순위: 내부자 클러스터 > 극단·상승 공매도 > 큰 폭 이동) 나머지는 짧게 덧붙이거나 생략. 망라보다 압축.
+- **금지**: 예측·결과(오를/내릴 것, 반등, 급등/급락, 저점/고점), 매매·스탠스(매수/매도/목표가/추천/비중), 그 종목 팩트 줄에 없는 숫자, 없는 이벤트 창조(실적/어닝/컨센서스/FOMC/출시). 소스6 팩트만 사용.
+- **지난 세션 이동 강도(중요)**: 이동 강도는 반드시 팩트 줄에 파이썬이 제공한 라벨(보합 / 상승 / 큰 폭 상승 / 하락 / 큰 폭 하락)을 그대로 사용. LLM이 자체 강도 표현을 만들지 말 것. 특히 **급등·급락(및 어떤 활용형 — 급락세·급락했·급등한 등)은 과거 세션을 묘사할 때조차 사용 금지** (위 금지 목록과 동일). 예: -7.49% → "큰 폭 하락"(O), "급락"(X).
+- **수급 숫자 정성 서술(매우 중요)**: watch에 넣을 수 있는 **유일한 숫자는 지난 세션 이동 %** 하나뿐(예: "(+4.84%)", "(-7.49%)") — 카드의 가격 등락과 일치하기 때문. 공매도 비중 %·평균 대비 ±%p·내부자 건수(×N, N건)·누적 일수(N일) 등 **수급 세부 숫자는 절대 쓰지 말 것**. (수급 상세 패널이 정확 숫자의 단일 출처이고, watch 팩트는 다른 스냅샷이라 같은 카드에서 값이 어긋난다.) 수급은 정성 표현으로: "공매도 비중이 평균을 웃도는(밑도는) 수준", "3거래일 연속 늘어나는(줄어드는) 흐름", "내부자 매도 클러스터가 포착", "고위직 내부자 매도 신호" 등.
+- **최고/가장 높은 등 최상급 표현 금지** (제공되지 않은 순위 정보).
+- 팩트 줄이 "특이 수급 신호 없음"인 조용한 종목: 정직하게 "특이 수급 신호 없음 — 지수 흐름과 동행하는지 관찰"처럼 씁니다.
+- **문장 마무리·구조 다양화(중요)**: 7줄이 같은 리듬으로 끝나지 않게 할 것. 마무리 관찰어(관찰 / 주목 / 지켜볼 구간 / 짚어볼 대목 / 확인이 필요 등)와 문장 형태를 종목마다 바꿔, 이웃한 티커가 똑같이 읽히지 않게. "…3일 연속 드리프트 중 … 이어지는지 관찰합니다" 같은 동일 패턴 반복 금지. 자연스럽게, 억지스럽지 않게.
+- 톤 예시 (실제 데이터 — 이동 %만 숫자, 수급은 정성):
+  · TSLA "지난 세션 큰 폭 하락(-7.49%) 뒤 공매도 비중이 평균을 크게 웃도는 수준 — 이 부담이 이번 주에도 이어지는지 주목합니다."
+  · AMZN "지난 세션 보합(+0.40%), 특이 수급 신호 없음 — 지수 흐름과 동행하는지 지켜볼 대목."
+- watch에서는 지난 세션 이동 % 외의 팩트 수급 숫자를 인용하지 말 것(정성 서술). 팩트에 없는 숫자·사실은 당연히 절대 금지.
 """
 
 PREVIEW_HUMAN_TEMPLATE = """이번 주(월요일 시작) 미국 시장 전망을 담은 프리뷰입니다. 분석 기준: {week_start}.
@@ -115,6 +136,9 @@ PREVIEW_HUMAN_TEMPLATE = """이번 주(월요일 시작) 미국 시장 전망을
 
 [소스5 — 지켜볼 테마 (지난주 주간 분석에서 carry forward)]
 {themes_context}
+
+[소스6 — M7 관전 포인트 팩트]
+{m7_preview_facts}
 
 위 스키마대로 유효한 JSON 객체 하나만 출력하세요."""
 
@@ -206,6 +230,80 @@ def _format_positioning_section(live_flags: list, cs_cards: list) -> tuple[str, 
     return "\n".join(lines), overflow
 
 
+def _preview_magnitude_label(change_pct) -> str:
+    """Python-assigned qualitative move label — the LLM never invents magnitude words.
+
+    Label set (fixed): 보합 / 상승 / 큰 폭 상승 / 하락 / 큰 폭 하락.
+    """
+    if change_pct is None:
+        return "변화 미확인"
+    try:
+        pct = float(change_pct)
+    except (TypeError, ValueError):
+        return "변화 미확인"
+    if pct >= 3.0:
+        return "큰 폭 상승"
+    elif pct >= 1.0:
+        return "상승"
+    elif pct >= -1.0:
+        return "보합"
+    elif pct >= -3.0:
+        return "하락"
+    else:
+        return "큰 폭 하락"
+
+
+def _format_m7_preview_facts(live_flags: list, wl_snap: dict) -> str:
+    """Build the [소스6] M7 관전 포인트 fact block — one line per M7 ticker.
+
+    Reuses ALREADY-COMPUTED data only (LLM must not add facts):
+      - last-session move: wl_snap["tickers"][tkr]["latest"]["change_pct"]
+        (nested `latest` key — same path the daily M7 context reads), with a
+        Python-assigned magnitude label so the LLM never invents magnitude words.
+      - short/insider signals: the pre-formatted flag TEXT for that ticker from
+        live_flags (domain in {short, insider}) — fed verbatim so real short %/±%p
+        and insider cluster counts are the only numbers cited.
+
+    Quiet ticker (no short/insider flag) → "특이 수급 신호 없음".
+    """
+    tickers = (wl_snap or {}).get("tickers") or {}
+
+    lines = []
+    for tkr in PREVIEW_M7_TICKERS:
+        # ── last-session move (nested latest.change_pct) ──
+        info = tickers.get(tkr) or {}
+        latest = info.get("latest") or {}
+        change_pct = latest.get("change_pct")
+        # fallback: some snapshot shapes carry change_pct at the ticker root
+        if change_pct is None:
+            change_pct = info.get("change_pct")
+        label = _preview_magnitude_label(change_pct)
+        if change_pct is None:
+            move_part = f"지난 세션 {label}"
+        else:
+            try:
+                move_part = f"지난 세션 {label}({float(change_pct):+.2f}%)"
+            except (TypeError, ValueError):
+                move_part = f"지난 세션 {label}"
+
+        # ── short + insider signals (verbatim flag text) ──
+        signal_texts = [
+            f.get("text", "").strip()
+            for f in live_flags
+            if f.get("ticker") == tkr
+            and f.get("domain") in {"short", "insider"}
+            and f.get("text", "").strip()
+        ]
+        if signal_texts:
+            signals_part = " · ".join(signal_texts)
+        else:
+            signals_part = "특이 수급 신호 없음"
+
+        lines.append(f"{tkr} | {move_part} | {signals_part}")
+
+    return "\n".join(lines)
+
+
 def _format_themes_from_archive(notes_root: Path) -> str:
     """Read the most recent weekly archive and carry forward themes."""
     archive_dir = notes_root / "raw" / "stockdog" / "narrative" / "archive"
@@ -285,11 +383,95 @@ def _validate_preview_narrative(obj: dict) -> list[str]:
             if not theme.get("title") or not theme.get("story"):
                 errors.append(f"themes[{i}] missing title or story")
 
+    # m7_preview (optional/lenient — like themes; NEVER hard-fail when absent/short)
+    m7p = obj.get("m7_preview", [])
+    if isinstance(m7p, list):
+        for i, entry in enumerate(m7p):
+            if not isinstance(entry, dict):
+                errors.append(f"m7_preview[{i}] is not a dict")
+                continue
+            if not entry.get("ticker") or not entry.get("watch"):
+                errors.append(f"m7_preview[{i}] missing ticker or watch")
+
     # data_as_of
     if not obj.get("data_as_of"):
         errors.append("data_as_of is missing")
 
     return errors
+
+
+# m7_preview magnitude guard — SCOPED to watch lines only (bare 급등/급락, any 활용형).
+# Deliberately NOT added to the global _PREVIEW_FORBIDDEN_RE / check_forbidden_words,
+# which scan the whole preview object and would wrongly reject a legitimate past-tense
+# 급락 in macro_position/themes.
+_M7_MAGNITUDE_RE = re.compile(r"급등|급락")
+
+
+def _check_m7_preview_magnitude(obj: dict) -> list[str]:
+    """Scan ONLY m7_preview[i].watch for LLM-invented magnitude words (급등/급락, any form).
+
+    The last-session move must use the Python-supplied label verbatim
+    (보합/상승/큰 폭 상승/하락/큰 폭 하락) — the LLM must not substitute 급등/급락 even when
+    describing the past session. Confined to watch strings so a legitimate past-tense
+    급락 elsewhere in the preview is untouched. Returns [] when m7_preview is absent
+    or malformed (leniency preserved elsewhere).
+    """
+    violations = []
+    m7 = obj.get("m7_preview")
+    if not isinstance(m7, list):
+        return violations
+    for i, entry in enumerate(m7):
+        if not isinstance(entry, dict):
+            continue
+        watch = entry.get("watch")
+        if isinstance(watch, str):
+            m = _M7_MAGNITUDE_RE.search(watch)
+            if m:
+                violations.append(f"m7_preview[{i}].watch: found magnitude word '{m.group()}'")
+    return violations
+
+
+# m7_preview supply-number guard — SCOPED to watch lines only. The 수급 상세 panel is
+# the single source of exact supply numbers; watch facts come from a DIFFERENT snapshot
+# and citing them causes a same-card mismatch (e.g. watch "38.1%" vs panel "46.5%").
+# So a watch line may carry AT MOST one numeric token — the last-session move % — and
+# must describe short/insider signals qualitatively. Confined to watch strings; the
+# global forbidden regex is NOT broadened (macro_position/themes legitimately use these).
+_M7_NUM_NBUILDING_RE = re.compile(r"\d+\s*일")   # building-days: "13일", "13 일"
+_M7_NUM_NCOUNT_RE = re.compile(r"\d+\s*건")      # insider counts: "3건", "1 건"
+
+
+def _check_m7_preview_numbers(obj: dict) -> list[str]:
+    """Scan ONLY m7_preview[i].watch for disallowed supply-number tokens.
+
+    Rejects a watch line containing any of: '%p', '×', a digit-then-'건', a digit-then-'일',
+    OR more than one '%' token (the single allowed '%' is the last-session move). Returns []
+    when m7_preview is absent/malformed (leniency preserved).
+    """
+    violations = []
+    m7 = obj.get("m7_preview")
+    if not isinstance(m7, list):
+        return violations
+    for i, entry in enumerate(m7):
+        if not isinstance(entry, dict):
+            continue
+        watch = entry.get("watch")
+        if not isinstance(watch, str):
+            continue
+        hits = []
+        if "%p" in watch:
+            hits.append("%p")
+        if "×" in watch:
+            hits.append("×")
+        if _M7_NUM_NCOUNT_RE.search(watch):
+            hits.append("N건")
+        if _M7_NUM_NBUILDING_RE.search(watch):
+            hits.append("N일")
+        if watch.count("%") > 1:
+            hits.append("multiple %")
+        if hits:
+            violations.append(f"m7_preview[{i}].watch: disallowed supply-number token(s) {hits}")
+    return violations
 
 
 # ---------------------------------------------------------------------------
@@ -406,6 +588,9 @@ def main() -> int:
     positioning_marker = f"\n(+{overflow}개 종목 추가 관찰 → /trackers/signals)" if overflow > 0 else ""
     themes_text = _format_themes_from_archive(notes_root)
     sector_context = extract_sector_snapshot(notes_root, data_as_of, mode="preview", stale_days=4)
+    # M7 관전 포인트 팩트 — reuse the watchlist snapshot loader + already-scored live_flags
+    wl_snap = load_watchlist_snapshot(notes_root)
+    m7_facts = _format_m7_preview_facts(live_flags, wl_snap)
 
     # ── LLM import (ONLY here — after all gates pass) ────────────────────────
     llm = get_llm()
@@ -439,6 +624,7 @@ def main() -> int:
                 "positioning_overflow_marker": positioning_marker,
                 "sector_context": sector_context,
                 "themes_context": themes_text,
+                "m7_preview_facts": m7_facts,
             })
             raw_text = (resp.content or "").strip()
         except _WallClockTimeout:
@@ -521,6 +707,23 @@ def main() -> int:
             write_output(notes_root, monday_date, data_as_of, "skipped", None, content_type="preview", generator="preview")
             return 0
 
+        # ── m7_preview watch-line guards (SCOPED to watch lines only) ────────
+        # (1) magnitude words (급등/급락) and (2) disallowed supply-number tokens
+        # (공매도 %/±%p/×N/N건/N일 — cross-snapshot mismatch with 수급 상세 panel).
+        # On any hit → retry (cap 2). On the final attempt, do NOT hard-fail the whole
+        # preview: drop m7_preview leniently and ship the rest (optional field).
+        m7_mag = _check_m7_preview_magnitude(preview_obj)
+        m7_num = _check_m7_preview_numbers(preview_obj)
+        if m7_mag or m7_num:
+            log(f"m7_preview watch-line violation (attempt {attempt}): "
+                f"magnitude={m7_mag} numbers={m7_num}")
+            if attempt < 2:
+                log("retrying LLM call...")
+                continue
+            log("m7_preview still violates watch-line guards after 2 attempts — dropping "
+                "m7_preview (lenient), keeping rest of preview")
+            preview_obj["m7_preview"] = []
+
         # ── All checks passed ───────────────────────────────────────────────
         log(f"preview narrative validated OK (attempt {attempt})")
 
@@ -541,6 +744,7 @@ def main() -> int:
                 "positioning": py_positioning,
                 "positioning_overflow": py_overflow,
                 "themes": preview_obj.get("themes", []),
+                "m7_preview": preview_obj.get("m7_preview", []),
             }
         )
         return 0
