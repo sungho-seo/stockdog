@@ -654,6 +654,25 @@ def write_output(notes_root: Path, run_date: str, data_as_of: str,
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / "narrative.json"
 
+    # Preserve-on-skip: a skipped/failed run must NOT clobber a last-good
+    # (status:ok) live pointer. The KR-evening sync_vault runs generate_narrative
+    # for a date with no US report (GATE-1 skip); without this guard that skip
+    # write blanks the home's whole narrative band until the next US daily.
+    # Archives are written only on status:ok, so the live pointer is the only
+    # thing at risk. (Idempotency keys on report_date==run_date, so preserving an
+    # older-date ok file never false-skips the next day's regeneration.)
+    if status != "ok" and out_path.is_file():
+        try:
+            _prev = json.loads(out_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            _prev = None
+        if _prev and _prev.get("status") == "ok":
+            log(f"skip write suppressed — preserving last-good live narrative "
+                f"(report_date={_prev.get('report_date')}, "
+                f"content_type={_prev.get('content_type')}) instead of "
+                f"clobbering with status={status}")
+            return
+
     payload = {
         "schema_version": SCHEMA_VERSION,
         "generated_at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
