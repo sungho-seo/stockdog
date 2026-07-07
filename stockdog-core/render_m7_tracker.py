@@ -28,6 +28,8 @@ import sys
 from datetime import date as _date, datetime, timedelta
 from pathlib import Path
 
+from utils.prior_close import prior_from_rows
+
 # Canonical ticker order — deterministic, NOT dict insertion order.
 TICKERS = ["AAPL", "AMZN", "GOOGL", "META", "MSFT", "NVDA", "TSLA"]
 
@@ -247,23 +249,17 @@ def render_regime_section(snapshot) -> list:
                 return v
         return None
 
-    def nth_back_valid(vals, n):
-        """Return the value n valid-points back from the latest (0 = latest)."""
-        valid = [v for v in vals if v is not None]
-        if not valid:
-            return None
-        idx = len(valid) - 1 - n
-        return valid[idx] if 0 <= idx < len(valid) else valid[0]
-
     fg_latest = last_valid(fg_vals)
     vix_latest = last_valid(vix_vals)
     y10_latest = last_valid(y10_vals)
 
     n_points = len(series)
     # VIX trend over available window (≈ up to N points), 10Y over ~5d.
-    vix_first = nth_back_valid(vix_vals, n_points - 1)
+    # Oldest point = (distinct-date count − 1) back from ref. On clean data there
+    # are n_points distinct dates incl. ref, so n_points-1 priors → the first point.
+    vix_first = prior_from_rows(series, "vix", n=n_points - 1).value if n_points > 1 else None
     vix_arrow = arrow(None if (vix_latest is None or vix_first is None) else vix_latest - vix_first)
-    y10_5d = nth_back_valid(y10_vals, 5)
+    y10_5d = prior_from_rows(series, "us_10y", n=5).value
     y10_arrow = arrow(None if (y10_latest is None or y10_5d is None) else y10_latest - y10_5d)
 
     lines = ["## 시장 컨텍스트", ""]

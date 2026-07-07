@@ -2,6 +2,9 @@ import requests
 from bs4 import BeautifulSoup
 import json
 import logging
+from datetime import datetime
+
+from utils.prior_close import select_prior
 
 logger = logging.getLogger(__name__)
 
@@ -50,18 +53,27 @@ def fetch_yahoo_finance_quote(ticker):
             result = data['chart']['result'][0]
             current_price = result['meta']['regularMarketPrice']
 
-            # Extract previous close from historical closes array.
-            # The last element is today; we want the most recent non-None close before that.
-            previous_close = None
+            # Extract previous close from historical closes array using prior_close helper.
+            # Build (date, value) pairs from timestamps and closes.
+            timestamps = result.get('timestamp', []) or []
             closes = result.get('indicators', {}).get('quote', [{}])[0].get('close', []) or []
-            if closes:
-                # Iterate backwards from second-to-last (excluding today's close)
-                for c in reversed(closes[:-1]):
-                    if c is not None:
-                        previous_close = c
-                        break
 
-            # Fallback to chartPreviousClose if array extraction failed
+            pairs = []
+            for ts, close_val in zip(timestamps, closes):
+                try:
+                    date_obj = datetime.utcfromtimestamp(ts).date()
+                    pairs.append((date_obj, close_val))
+                except (TypeError, ValueError):
+                    pass
+
+            # Use select_prior to get the prior close (n=1, respecting gap window)
+            previous_close = None
+            if pairs:
+                prior_result = select_prior(pairs, pairs[-1][0], n=1)
+                if prior_result.value is not None and prior_result.within_window:
+                    previous_close = prior_result.value
+
+            # Fallback to chartPreviousClose if prior extraction failed
             if previous_close is None:
                 previous_close = result['meta'].get('chartPreviousClose')
 

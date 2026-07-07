@@ -18,6 +18,8 @@ from datetime import datetime, timezone
 
 import yfinance as yf
 
+from utils.prior_close import prior_from_history
+
 logger = logging.getLogger(__name__)
 
 # (ticker, 표시명, 통화) — 추가 watchlist는 추후 vault 읽기로 확장 가능
@@ -41,9 +43,15 @@ def _fetch_one(ticker: str, name: str, currency: str) -> dict | None:
             return None
 
         last_close = round(float(hist["Close"].iloc[-1]), 2)
-        prev_close = round(float(hist["Close"].iloc[-2]), 2) if len(hist) > 1 else last_close
-        change_abs = round(last_close - prev_close, 2)
-        change_pct = round((last_close - prev_close) / prev_close * 100, 2) if prev_close else 0.0
+        prior = prior_from_history(hist)
+        if prior.value is not None and prior.within_window:
+            prev_close = round(prior.value, 2)
+            change_abs = round(last_close - prev_close, 2)
+            change_pct = round((last_close - prev_close) / prev_close * 100, 2) if prev_close else None
+        else:
+            prev_close = last_close
+            change_abs = 0.0
+            change_pct = None
 
         return {
             "name": name,

@@ -1,6 +1,8 @@
 import logging
 import yfinance as yf
 
+from utils.prior_close import prior_from_history
+
 logger = logging.getLogger(__name__)
 
 
@@ -30,7 +32,11 @@ def get_us_market_data(items):
                 continue
 
             close = round(float(hist['Close'].iloc[-1]), 2)
-            prev_close = round(float(hist['Close'].iloc[-2]), 2) if len(hist) > 1 else close
+            prior = prior_from_history(hist)
+            if prior.value is not None and prior.within_window:
+                prev_close = round(prior.value, 2)
+            else:
+                prev_close = close
             volume = int(hist['Volume'].iloc[-1]) if 'Volume' in hist.columns else 0
             # yfinance Timestamp → 'YYYY-MM-DD'. Index가 tz-aware일 수도 있어 strftime만 사용.
             try:
@@ -40,7 +46,7 @@ def get_us_market_data(items):
 
             # Compute change_pct with plausibility guard for split detection.
             change_pct = None
-            if prev_close != 0:
+            if prior.value is not None and prior.within_window and prev_close != 0:
                 change_pct = round((close - prev_close) / prev_close * 100, 2)
 
                 # Plausibility guard: if |change_pct| > 40% and ratio looks like a clean split,

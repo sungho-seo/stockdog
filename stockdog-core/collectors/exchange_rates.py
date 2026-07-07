@@ -1,6 +1,8 @@
 import logging
 import yfinance as yf
 
+from utils.prior_close import prior_from_history
+
 logger = logging.getLogger(__name__)
 
 
@@ -18,8 +20,12 @@ def get_exchange_rates():
             return results
 
         rate = round(float(hist['Close'].iloc[-1]), 2)
-        prev_rate = round(float(hist['Close'].iloc[-2]), 2) if len(hist) > 1 else rate
-        change_pct = round((rate - prev_rate) / prev_rate * 100, 2)
+        prior = prior_from_history(hist)
+        if prior.value is not None and prior.within_window and prior.value != 0:
+            prev_rate  = round(prior.value, 2)
+            change_pct = round((rate - prev_rate) / prev_rate * 100, 2)
+        else:
+            prev_rate, change_pct = rate, None
 
         results['USD_KRW'] = {
             'rate': rate,

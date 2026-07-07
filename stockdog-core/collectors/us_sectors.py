@@ -61,6 +61,8 @@ from typing import Dict, List, Optional, Any
 
 import yfinance as yf
 
+from utils.prior_close import prior_from_history
+
 logger = logging.getLogger(__name__)
 
 SECTOR_ETFS = [
@@ -97,10 +99,15 @@ def _fetch_one(etf: str, name: str) -> Optional[Dict[str, Any]]:
 
         # Extract close values - iloc returns scalar for Series
         close = round(float(hist["Close"].iloc[-1]), 2)
-        prev_close = round(float(hist["Close"].iloc[-2]), 2)
-
-        # d1: last vs prior session
-        d1 = round((close - prev_close) / prev_close * 100, 2) if prev_close else 0.0
+        prior = prior_from_history(hist)
+        if prior.value is not None and prior.within_window:
+            prev_close = round(prior.value, 2)
+            d1 = round((close - prev_close) / prev_close * 100, 2) if prev_close else 0.0
+        else:
+            # No valid prior within window → never compute against a stale baseline.
+            # d1=None (consumer narrative_common.py filters `d1 is not None`); prev=current.
+            prev_close = close
+            d1 = None
 
         # d5: last vs 5 sessions ago (if available)
         if len(hist) >= 6:

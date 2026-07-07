@@ -21,6 +21,8 @@ import sys
 from datetime import date as _date, datetime
 from pathlib import Path
 
+from utils.prior_close import prior_from_rows
+
 # ===========================================================================
 # copied from render_m7_tracker.py — keep in sync
 # (M4: helpers duplicated intentionally so render_m7_tracker.py stays byte-for-byte
@@ -141,15 +143,6 @@ def _last_valid(vals):
     return None
 
 
-def _nth_back_valid(vals, n):
-    """Value n valid-points back from latest (0 = latest); None if unavailable."""
-    valid = [v for v in vals if v is not None]
-    if not valid:
-        return None
-    idx = len(valid) - 1 - n
-    return valid[idx] if 0 <= idx < len(valid) else None
-
-
 def _last_valid_date(daily, keys):
     """Date of the most recent daily row where ANY of `keys` is non-null.
 
@@ -213,11 +206,11 @@ def render_context(daily, n) -> list:
 
     lines = ["## 시장 컨텍스트", ""]
     spread_latest = _last_valid(t10y2y)
-    spread_5d = _nth_back_valid(t10y2y, 5)
+    spread_5d = prior_from_rows(daily, "t10y2y", n=5).value
     y10_latest = _last_valid(y10)
-    y10_5d = _nth_back_valid(y10, 5)
+    y10_5d = prior_from_rows(daily, "macro_10y", n=5).value
     dxy_latest = _last_valid(dxy)
-    dxy_5d = _nth_back_valid(dxy, 5)
+    dxy_5d = prior_from_rows(daily, "dxy_broad", n=5).value
 
     inv = " · ⚠️ 역전" if (spread_latest is not None and spread_latest < 0) else ""
     lines.append("| 지표 | 최신 | 추세 | Δ5d |")
@@ -257,8 +250,8 @@ def render_curve(daily, n, freshness) -> list:
     for label, key, dp in rows:
         vals = _col(daily, key)
         latest = _last_valid(vals)
-        d5 = _nth_back_valid(vals, 5)
-        d20 = _nth_back_valid(vals, 20)
+        d5 = prior_from_rows(daily, key, n=5).value
+        d20 = prior_from_rows(daily, key, n=20).value
         ar = arrow(None if (latest is None or d5 is None) else latest - d5)
         suffix = ""
         if key == "t10y2y" and latest is not None and latest < 0:
@@ -351,8 +344,10 @@ def render_fx(daily, n) -> list:
     lines = ["## 환율 / 달러", ""]
     dxy = _col(daily, "dxy_broad")
     krw = _col(daily, "usd_krw")
-    dxy_latest, dxy_5d = _last_valid(dxy), _nth_back_valid(dxy, 5)
-    krw_latest, krw_5d = _last_valid(krw), _nth_back_valid(krw, 5)
+    dxy_latest = _last_valid(dxy)
+    dxy_5d = prior_from_rows(daily, "dxy_broad", n=5).value
+    krw_latest = _last_valid(krw)
+    krw_5d = prior_from_rows(daily, "usd_krw", n=5).value
 
     lines.append("| 지표 | 최신 | Δ5d | 추세 | 추이 |")
     lines.append("| --- | --- | --- | --- | --- |")

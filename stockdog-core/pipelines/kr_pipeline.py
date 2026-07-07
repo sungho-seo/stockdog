@@ -312,9 +312,12 @@ class KRPipeline(MarketPipeline):
         if report and not report.startswith("> [!error]") and not report.startswith("Error"):
             usd_krw = data.get('exchange', {}).get('USD_KRW', {})
             rate = usd_krw.get('rate', 'N/A')
-            change = usd_krw.get('change_pct', 0)
+            change = usd_krw.get('change_pct')
+            # change_pct는 out-of-window/무데이터 시 None (0.0 아님) — .get 기본값은
+            # 키 부재에만 적용되므로 None을 별도로 처리해야 :+.2f 포맷 크래시를 막는다.
+            change_str = f" ({change:+.2f}%)" if change is not None else ""
             # 국장 리포트 → KR 대시보드(/kr). 날짜 무관 정적 링크라 발행 지연/404 없음.
-            msg = f"🇰🇷 *KR Report Ready*\n\nUSD/KRW: {rate} ({change:+.2f}%)"
+            msg = f"🇰🇷 *KR Report Ready*\n\nUSD/KRW: {rate}{change_str}"
             msg += "\n🔗 https://blog.seosungho.com/kr"
             send_telegram_message(msg)
         else:
