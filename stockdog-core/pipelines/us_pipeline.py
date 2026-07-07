@@ -35,6 +35,23 @@ def _us_data_as_of(data: dict) -> str | None:
     return most_common
 
 
+def _session_stale(kst_today, data_as_of, threshold=2):
+    """True when the US trade session has NOT advanced since the prior run —
+    this run would only stamp the prior session's data onto a fresh KST row
+    (holiday/weekend), producing a flat sparkline artifact. Cron runs 06:30 KST
+    after the US close, so a NORMAL run sees data_as_of == kst_today-1 (delta 1);
+    delta>=2 ⇒ non-trading session already captured ⇒ skip. Fails safe to False.
+    ASSUMPTION: cron fires KST morning after the US close; revisit if cron moves."""
+    if not data_as_of:
+        return False
+    try:
+        from datetime import date as dateclass
+        d = datetime.strptime(data_as_of, "%Y-%m-%d").date()
+    except (TypeError, ValueError):
+        return False
+    return (kst_today - d).days >= threshold
+
+
 class USPipeline(MarketPipeline):
     REGION_LABEL = "US"
     FAILED_REASON_HINT = "indicators/us_market"
@@ -168,7 +185,12 @@ class USPipeline(MarketPipeline):
                                   data_as_of=data_as_of, data_freshness=data_freshness)
         try:
             _, media_dir, date_str = _get_daily_dirs(self.config)
-            save_indicators(self._indicators)
+            kst_today = (datetime.now(timezone.utc) + timedelta(hours=9)).date()
+            stale = _session_stale(kst_today, data_as_of)
+            if not stale:
+                save_indicators(self._indicators)
+            else:
+                print(f"[INFO] non-trading session (data_as_of={data_as_of}) — skipping save_indicators")
             # Stage a vault-readable snapshot for the host-side M7 renderer
             # (which cannot read the root-owned, gitignored metrics_history.db).
             # base_dir is /notes/raw/stockdog/daily-market → derive m7 dir.
@@ -201,7 +223,7 @@ class USPipeline(MarketPipeline):
                         usd_krw = (get_exchange_rates().get('USD_KRW') or {}).get('rate')
                     except Exception as fxe:
                         print(f"[WARN] macro USD/KRW fetch failed, continuing: {fxe}")
-                save_macro(macro_latest, usd_krw)
+                save_macro(macro_latest, usd_krw, skip_daily=stale)
                 macro_dir = os.path.join(os.path.dirname(base_dir), 'macro')
                 stage_macro_snapshot(os.path.join(macro_dir, 'macro_snapshot.json'))
             except Exception as me:

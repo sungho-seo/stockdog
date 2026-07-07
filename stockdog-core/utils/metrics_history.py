@@ -95,7 +95,7 @@ def save_indicators(indicators: dict, db_path=DB_PATH) -> None:
         )
 
 
-def save_macro(macro_latest: dict, usd_krw, db_path=DB_PATH) -> None:
+def save_macro(macro_latest: dict, usd_krw, db_path=DB_PATH, skip_daily=False) -> None:
     """IMPR-061: persist today's macro snapshot — column-scoped (M1-safe).
 
     `macro_latest` is {key: {"date", "value"}} from fred_macro.get_macro_latest().
@@ -103,6 +103,9 @@ def save_macro(macro_latest: dict, usd_krw, db_path=DB_PATH) -> None:
     column-scoped UPDATE so they never collide with save_indicators. Monthly
     inflation series (cpi/core_cpi/ppi) upsert into macro_monthly keyed by their
     OWN observation date, so the level is filed under the real release month.
+
+    If skip_daily=True, skip the today() row write (non-trading session guard).
+    Jobless and macro_monthly writes (keyed by real obs_date) always run.
 
     Never raises (the pipeline wraps this too, but defense-in-depth).
     """
@@ -112,29 +115,33 @@ def save_macro(macro_latest: dict, usd_krw, db_path=DB_PATH) -> None:
     macro_latest = macro_latest or {}
     try:
         with _conn(db_path) as conn:
-            conn.execute("INSERT OR IGNORE INTO market_metrics (date) VALUES (?)", (today,))
+            # Daily write gate: skip if this is a non-trading session (stale run).
+            if not skip_daily:
+                conn.execute("INSERT OR IGNORE INTO market_metrics (date) VALUES (?)", (today,))
 
-            # Daily/weekly macro columns onto today's row — only those we actually have.
-            # IMPR-068: hy_spread added to daily; jobless (weekly) stored sparse on
-            # its FRED observation date (not today) so the chart shows the right week.
-            # IMPR-070: vix (FRED VIXCLS) added — same column as save_indicators' vix,
-            # column-scoped UPDATE so they never clobber each other.
-            daily_cols = ["us_2y", "macro_10y", "us_30y", "t10y2y", "fed_funds", "dxy_broad",
-                          "hy_spread", "vix"]
-            for col in daily_cols:
-                entry = macro_latest.get(col)
-                if entry and entry.get("value") is not None:
+                # Daily/weekly macro columns onto today's row — only those we actually have.
+                # IMPR-068: hy_spread added to daily; jobless (weekly) stored sparse on
+                # its FRED observation date (not today) so the chart shows the right week.
+                # IMPR-070: vix (FRED VIXCLS) added — same column as save_indicators' vix,
+                # column-scoped UPDATE so they never clobber each other.
+                daily_cols = ["us_2y", "macro_10y", "us_30y", "t10y2y", "fed_funds", "dxy_broad",
+                              "hy_spread", "vix"]
+                for col in daily_cols:
+                    entry = macro_latest.get(col)
+                    if entry and entry.get("value") is not None:
+                        conn.execute(
+                            f"UPDATE market_metrics SET {col}=? WHERE date=?",
+                            (entry["value"], today)
+                        )
+                if usd_krw is not None:
                     conn.execute(
-                        f"UPDATE market_metrics SET {col}=? WHERE date=?",
-                        (entry["value"], today)
+                        "UPDATE market_metrics SET usd_krw=? WHERE date=?",
+                        (usd_krw, today)
                     )
-            if usd_krw is not None:
-                conn.execute(
-                    "UPDATE market_metrics SET usd_krw=? WHERE date=?",
-                    (usd_krw, today)
-                )
+
             # jobless (ICSA): file on the FRED observation date (latest Thursday),
             # not today — this keeps chart dates aligned to the actual release week.
+            # ALWAYS run regardless of skip_daily, since obs_date != today.
             entry = macro_latest.get("jobless")
             if entry and entry.get("value") is not None and entry.get("date"):
                 obs_d = entry["date"]
@@ -286,7 +293,7 @@ def stage_macro_snapshot(snapshot_path: str, db_path=DB_PATH) -> str | None:
                 # IMPR-070: LIMIT raised 90→400 (~1.5yr trading days) for period-toggle;
                 # vix added (FRED VIXCLS source via save_macro / backfill_macro).
                 "SELECT date, us_2y, macro_10y, us_30y, t10y2y, fed_funds, dxy_broad, usd_krw,"
-                "       hy_spread, jobless, vix "
+                "       hy_spread, jobless, vix, us_10y "
                 "FROM market_metrics ORDER BY date DESC LIMIT 400"
             ).fetchall()
             daily_rows = sorted(daily_rows)  # oldest -> newest
@@ -294,7 +301,7 @@ def stage_macro_snapshot(snapshot_path: str, db_path=DB_PATH) -> str | None:
                 {
                     "date": r[0], "us_2y": r[1], "macro_10y": r[2], "us_30y": r[3],
                     "t10y2y": r[4], "fed_funds": r[5], "dxy_broad": r[6], "usd_krw": r[7],
-                    "hy_spread": r[8], "jobless": r[9], "vix": r[10],
+                    "hy_spread": r[8], "jobless": r[9], "vix": r[10], "us_10y": r[11],
                 }
                 for r in daily_rows
             ]

@@ -201,14 +201,14 @@ def signed_point(latest, nback, dp=2):
 def render_context(daily, n) -> list:
     """## 시장 컨텍스트 — spread headline, US 10Y, broad dollar."""
     t10y2y = _col(daily, "t10y2y")
-    y10 = _col(daily, "macro_10y")
+    y10 = _col(daily, "us_10y")
     dxy = _col(daily, "dxy_broad")
 
     lines = ["## 시장 컨텍스트", ""]
     spread_latest = _last_valid(t10y2y)
     spread_5d = prior_from_rows(daily, "t10y2y", n=5).value
     y10_latest = _last_valid(y10)
-    y10_5d = prior_from_rows(daily, "macro_10y", n=5).value
+    y10_5d = prior_from_rows(daily, "us_10y", n=5).value
     dxy_latest = _last_valid(dxy)
     dxy_5d = prior_from_rows(daily, "dxy_broad", n=5).value
 
@@ -261,7 +261,7 @@ def render_curve(daily, n, freshness) -> list:
             f"| {signed_bps(latest, d20)} | `{sparkline(vals)}` | {ar} |"
         )
     lines.append("")
-    lines.append("*Δ는 베이시스포인트(bps). 10Y-2Y < 0 이면 장단기 금리 역전 — 침체 신호로 흔히 관찰됨 (시그널 아님).*")
+    lines.append("*Δ는 베이시스포인트(bps). 이 곡선은 FRED 상수만기(전일 종가) 기준으로, 상단 'US 10Y'(당일 ^TNX)와 소수 bp 차이가 날 수 있습니다. 10Y-2Y < 0 이면 장단기 금리 역전 — 침체 신호로 흔히 관찰됨 (시그널 아님).*")
     lines.append("")
     return lines
 
@@ -300,7 +300,7 @@ def render_inflation(inflation, daily) -> list:
     lines.append(_infl_row("PPI", ppi))
 
     # 실질 10Y = US 10Y − Core CPI YoY
-    y10_latest = _last_valid(_col(daily, "macro_10y"))
+    y10_latest = _last_valid(_col(daily, "us_10y"))
     core_yoy = ((core or {}).get("latest") or {}).get("yoy")
     if y10_latest is not None and core_yoy is not None:
         real10y = round(y10_latest - core_yoy, 2)
