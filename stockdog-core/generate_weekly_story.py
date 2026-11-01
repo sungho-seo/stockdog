@@ -147,6 +147,30 @@ def _build_weekly_m7_context(notes_root: Path, week_dates: list[str]) -> str:
 # Validation (weekly-specific)
 # ---------------------------------------------------------------------------
 
+def _sanitize_m7_weekly(obj: dict) -> list[str]:
+    """Normalize m7_weekly tickers in place; drop items whose ticker is not a single M7 symbol.
+
+    One bad item (e.g. grouped "AAPL·MSFT·GOOGL") must not sink the whole week —
+    the ≥5 items rule in _validate_weekly_narrative still applies after dropping.
+    Returns the list of dropped ticker values (for logging).
+    """
+    m7w = obj.get("m7_weekly")
+    if not isinstance(m7w, list):
+        return []
+    kept, dropped = [], []
+    for item in m7w:
+        if isinstance(item, dict) and isinstance(item.get("ticker"), str):
+            item["ticker"] = item["ticker"].strip().upper()
+            if item["ticker"] in _M7_TICKERS:
+                kept.append(item)
+                continue
+            dropped.append(item["ticker"])
+        else:
+            dropped.append(repr(item)[:40])
+    obj["m7_weekly"] = kept
+    return dropped
+
+
 def _validate_weekly_narrative(obj: dict) -> list[str]:
     """Return list of validation errors (empty = valid)."""
     errors = []
@@ -222,7 +246,7 @@ WEEKLY_SYSTEM_PROMPT = """당신은 한국 일반 대중 독자를 위한 주간
 
 **주간 톤 개선(analyst 권고)**:
 ⑤ 주간 회고는 데일리보다 절제된 톤 — "급락", "폭락", "패닉" 같은 자극적 표현은 한 주에 1회 이내. 반복 시 "큰 폭의 하락", "조정", "낙폭 확대" 등으로 변주
-⑥ 데이터 없는 M7 종목은 억지로 한 단락씩 쓰지 말 것 — 그 주 소스에 개별 움직임 없는 종목은 생략하거나 한 줄로 묶기(예: "AAPL·MSFT·GOOGL: 개별 촉매 없이 지수 흐름에 동조"). "~받았을 것으로 관찰됩니다" 류 유사 문장 반복 금지
+⑥ 데이터 없는 M7 종목은 억지로 한 단락씩 쓰지 말 것 — 그 주 소스에 개별 움직임 없는 종목은 생략하거나 짧은 한 문장으로만 쓸 것(예: {{"ticker": "AAPL", "story": "개별 촉매 없이 지수 흐름에 동조"}}). m7_weekly의 ticker는 반드시 AAPL·MSFT·GOOGL·AMZN·META·NVDA·TSLA 중 정확히 하나 — 여러 종목을 한 항목에 묶지 말 것. "~받았을 것으로 관찰됩니다" 류 유사 문장 반복 금지
 ⑦ 한 주의 흐름을 한쪽 날에 몰아 서술하지 말 것 — 주초·주중·주말 변화를 비례감 있게 다뤄 "주간 추세 전환"이 드러나게
 
 모든 내용은 정보·교육·참고용입니다.
@@ -389,9 +413,16 @@ def main() -> int:
             return 0
 
         # ── Schema validation ───────────────────────────────────────────────
-        val_errors = _validate_weekly_narrative(weekly_obj)
+        if isinstance(weekly_obj, dict):
+            dropped = _sanitize_m7_weekly(weekly_obj)
+            if dropped:
+                log(f"m7_weekly: dropped items with invalid ticker {dropped} (attempt {attempt})")
+            val_errors = _validate_weekly_narrative(weekly_obj)
+        else:
+            val_errors = ["top-level JSON is not an object"]
         if val_errors:
             log(f"schema validation failed (attempt {attempt}): {val_errors}")
+            log(f"raw LLM output head (attempt {attempt}): {raw_text[:800]!r}")
             if attempt < 2:
                 log("retrying LLM call...")
                 continue
