@@ -139,7 +139,28 @@ git commit -m "Forward story $DATE ($GENERATOR)" || {
 # ---- Step 9: Push (always exit 0 on the publish path; failed push is logged but non-fatal)
 echo "[publish_forward_story.sh] pushing to master..."
 if git push origin master 2>&1; then
-    send_telegram "📤 *Forward story published*\nDate: $DATE\nGenerator: $GENERATOR\n🔗 https://blog.seosungho.com/daily-stories/$DATE"
+    # ---- Step 10: Wait until the page is actually live before notifying.
+    # The blog is rebuilt by a separate 5-min build_all.sh cron (~2-3 min per build),
+    # so notifying right after push sent a link that 404'd for 5-10 min (2026-11-01).
+    STORY_URL="https://blog.seosungho.com/daily-stories/$DATE"
+    WAIT_MAX_SEC="${STORY_WAIT_MAX_SEC:-900}"
+    WAIT_STEP_SEC=30
+    waited=0
+    live=0
+    code="000"
+    while (( waited < WAIT_MAX_SEC )); do
+        code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$STORY_URL" || true)
+        if [[ "$code" == "200" ]]; then live=1; break; fi
+        sleep "$WAIT_STEP_SEC"
+        waited=$(( waited + WAIT_STEP_SEC ))
+    done
+    if (( live )); then
+        echo "[publish_forward_story.sh] page live after ${waited}s: $STORY_URL"
+        send_telegram "📤 *Forward story published*\nDate: $DATE\nGenerator: $GENERATOR\n🔗 $STORY_URL"
+    else
+        echo "[publish_forward_story.sh] page not live after ${WAIT_MAX_SEC}s (last HTTP $code): $STORY_URL"
+        send_telegram "📤 *Forward story published* (사이트 반영 지연 — ${WAIT_MAX_SEC}s 내 미반영, HTTP $code)\nDate: $DATE\nGenerator: $GENERATOR\n🔗 $STORY_URL"
+    fi
     echo "[publish_forward_story.sh] ✅ forward story published: $DATE ($GENERATOR)"
     exit 0
 else
